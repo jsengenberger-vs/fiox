@@ -1,1 +1,7 @@
-#foo
+#!/usr/bin/env python
+from Libfiox import *
+import sys
+	
+if __name__ == "__main__":
+	sys.stdout=stdoutWrapper=stdout_wrapper("./logs/fiox.log",basic=1)
+	main(stdoutWrapper)

@@ -1,0 +1,17 @@
+[global]
+ioengine=libaio
+invalidate=0 
+rw=write
+size=100%
+bs=512k
+direct=1
+group_reporting
+time_based
+
+norandommap
+thread
+
+filename=/dev/rbd21:/dev/rbd22:/dev/rbd23:/dev/rbd24:/dev/rbd25:/dev/rbd26:/dev/rbd27:/dev/rbd28
+[job1]
+numjobs=8
+iodepth=8
