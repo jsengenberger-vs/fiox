@@ -39,6 +39,7 @@ class FioxCaptureTool:
 	def __init__(self):
 		import Libmon
 		self.sarmon=Libmon.SarMon()
+                self.histmon=Libmon.HistogramFioMon()
 
 	def add_host(self,hostname):
 		self.sarmon.add_host(hostname)
@@ -50,8 +51,12 @@ class FioxCaptureTool:
 		self.sarmon.start_capture(measurementname)
 
 	def posttest_capture(self,measurementname):
+                output=None
 		self.sarmon.wait_for_complete()	
 		self.sarmon.copy_files()
+                output=self.histmon.process_files()
+
+                return output
 
 	def posttest_cleanup(self,measurementname):
 		try:
@@ -1859,6 +1864,11 @@ class FIO_Measurement(Measurement):
 			extra.append("filesize=%s" % self.extraOptions.size_of_files)
 			extra.append("size=%s" % self.extraOptions.size_of_files)
 
+		if self.extraOptions.histo_timeseries:
+                    extra.append("write_hist_log=z")
+                    extra.append("log_hist_coarseness=z")
+                    extra.append("log_hist_msec=1000")
+
 		#If we are running a mixture of reads and writes
 		if self.readpercent != 100 and self.readpercent != 0:
 			extra.append("rwmixread=%s" % self.readpercent)
@@ -2094,824 +2104,830 @@ class OptimalPerformance:
 		#parser.add_option("-c","--create",	dest="create",		help="Create files in the directories specified on command line")
 		#parser.add_option("-n","--number",	dest="create_number",	help="Specify the number of files to create in each directory")
 		parser.add_option("--ioengine",		dest="ioengine",	help="FIO ioengine to use.  Default is sync",type="string"),
-		parser.add_option("--numtcp",		dest="numtcpportsperhost",	help="Num TCP ports per host. Defaults to 1",type="string"),
+		parser.add_option("--numtcp",		dest="numtcpportsperhost",help="Num TCP ports per host. Defaults to 1",type="string"),
 		parser.add_option("--hosts",		dest="hostlist",	help="List of Hosts to run against.  Default is localhost",type="string"),
-		parser.add_option("--sar",		dest="sarcapture",	help="List of extra systems like ceph nodes to monitor",action='store_true'),
-		parser.add_option("--mons",		dest="monlist",		help="List of extra systems like ceph nodes to monitor",type="string"),
-		parser.add_option("--ao_input",		dest="aoConfig",	help="Filename and ao policy to use.  --ao_input <aosample.csv>,<evening_policy>,<total_capacity_in_gb>.  Default is diabled",type="string"),
-		parser.add_option("-x","--xferlist",	dest="xferlist",	help="List of I/O transfer sizes to use.  Default: [8,128]",type="string"),
-		parser.add_option("-q","--tl",		dest="qdepthlist",	help="List of Qdepths to start with. Default: [1,2,4,8,12,16,32,64]",type="string"),
-		parser.add_option("-s","--sizeOfFile",	dest="size_of_files",	help="Specify the the size of each file created in each directory, when creating files for first time.")
-		#parser.add_option("-n","--numOfFiles",	dest="num_of_files",	help="Specify the the number of files to create of size -s")
-		parser.add_option("-r","--rsplimit",	dest="responselimit",	help="Response time in milliseconds to give up measuring past, default 60, (60ms)", type="int")
-		parser.add_option("--demo",		dest="demo",		help="Overrides parameters to ensure a very short duration - For Demo purposes only. Do NOT make sizing decisions based on these results",action="store_true")
-		parser.add_option("--fq","--fixedqd",	dest="fixedqd",		help="Use Fixed queue depths, and ignore response time limits",action="store_true")
-		parser.add_option("--iops","--iopgoal",	dest="iop_override",	help="Specify a single IOP Goal to use, intended for use with aotest.py.  Not compatible with --fq or -q",type="int")
-		parser.add_option("--wu",		dest="warmup",		help="Warmup time before, measurement begins, in seconds.  default 30 (30s)",type="int")
-		parser.add_option("--me",		dest="measurement",	help="Measurement time - length of time to ru nmeasurement, in seconds. default 60 (60s)",type="int")
-		parser.add_option("--cd",		dest="cooldown",	help="Cooldown (Rest Time) between measurements to let system recover, default 30 (30s)",type="int")
-		parser.add_option("--sa",		dest="sampleinterval",	help="Length of time for each sample.  Defaults to measurement period",type="int")
-		parser.add_option("--tool",		dest="tool",		help="specifies name of tool to use: [fio|vdbench] default: fio",type="string")
-		parser.add_option("--all",		dest="all",		help="include --rr, --rw, --sr,--sw,--oltp",action='store_true')
-		parser.add_option("--rr","--ranread",	dest="workloads",	help="Measure random reads",action="callback",callback=self.__arg_parse_workload__)
-		parser.add_option("--rw","--ranwrite",	dest="workloads",	help="Measure random writes",action="callback",callback=self.__arg_parse_workload__)
-		parser.add_option("--sr","--seqread",	dest="workloads",	help="Measure sequential reads",action="callback",callback=self.__arg_parse_workload__)
-		parser.add_option("--sw","--seqwrite",	dest="workloads",	help="Measure sequential writes",action="callback",callback=self.__arg_parse_workload__)
-		parser.add_option("--segr","--segread",	dest="workloads",	help="Measure segmented sequential reads ( DP only!)",action="callback",callback=self.__arg_parse_workload__)
-		parser.add_option("--segw","--segwrite",dest="workloads",	help="Measure segmented sequential writes ( DP only!)",action="callback",callback=self.__arg_parse_workload__)
-		parser.add_option("--oltp",		dest="workloads",	help="Measure Random (mixed reads/writes) with specified percentages (-m --mix)",action="callback",callback=self.__arg_parse_workload__)
-		parser.add_option("--custom_oltp",	dest="workloads",	help="Measure Random (mixed reads/writes) with specified percentages (-m --mix) and seek percent(--seekper)",action="callback",callback=self.__arg_parse_workload__)
-		parser.add_option("--seqoltp",		dest="workloads",	help="Measure Sequential (mixed reads/writes) specified percentages (-m --mix)",action="callback",callback=self.__arg_parse_workload__)
-		parser.add_option("--segoltp",		dest="workloads",	help="Measure segmented Sequential (mixed reads/writes) specified percentages (-m --mix) ( DO only!)",action="callback",callback=self.__arg_parse_workload__)
-		parser.add_option("-m","--mix",		dest="mixtures",	help="Override default Read percentage for OLTP measurements.  80,60 means 1x80% read measurement, 1x60% read measurement",type="string")
-		parser.add_option("--seekper",		dest="seekper",		help="Percentage of seeking for custom oltp",type="string")
-		parser.add_option("-o","--offset",	dest="offset",		help="Limit addressable space to a set of block multiple addressess  (DP only!)",type="string")
-		parser.add_option("--o_sync",		dest="o_sync",		help="Open devices/files using O_SYNC instead of O_DIRECT",action="store_true")
-		parser.add_option("--fill",		dest="fill",		help="Fill the device/files specified using a sequential pattern then begin measurement",action="store_true")
-		parser.add_option("--fillstop",		dest="fillstop",	help="Same as --fill, but stop after fill completes. Do not run measurements",action="store_true")
-		parser.add_option("--ds","--debug_skipcleanup",	dest="skipcleanup",	help="Skips cleanup of workload generator files.",action="store_true"),
-		parser.add_option("--msg",		dest="expmsg",		help="Specify message describing this experiment.  Added to logfile",type="string")
-		parser.add_option("--pattern",		dest="pattern",		help="Specify target dedupe ratio. 0=deault,1=1:1,2=2:1,3=3:1 default is default behavior for specified tools",type="int")
-		parser.add_option("--cachehit",		dest="cachehit",	help="Specifiy cachehit and depth ratio separated by comma.  --cachehit 10,100 (10% hit, 100 depth) Disabled by default.  ",type="string")
-		parser.add_option("--align",		dest="align",		help="Override alignment, specify blocksize of alignment in bytes ",type="string")
-		if cli_args:
-			(options,args) = parser.parse_args(args=cli_args)
-		else:
-			(options,args) = parser.parse_args()
-
-		debug(options,1)
-		debug(args,1)
-		print options
-		print args
-
-		self.devList=args
-		#if options.hostlist == None:
-		#	options.hostlist='127.0.0.1'
-
-		if len(args) < 1 and options.hostlist == None and not cli_args:
-			print "Exiting"
-			return 0
-		self.setExtraOptions(options)
-
-		self.logfile_config_name()
-
-		return 1
-
-	def get_dev_list(self):
-		return self.devList
-
-
-	def get_logfile_id(self,testclass="op",force=False):
-		if self.logfile_id == None or force == True:
-			self.logfile_id="%s.%s" % (testclass,time.strftime("%y%m%d.%H%M%S"))
-		return self.logfile_id
-
-	def logfile_config_name(self):
-		
-		try: os.mkdir("./op_logs/")
-		except:pass
-
-		if self.experiment_message.strip():
-			msg=".%s" % self.experiment_message.replace(" ","_").strip()
-			self.get_logfile_id(testclass="op")
-		else:
-			msg=""
-			self.get_logfile_id(testclass="exp")
-
-		logfile="./op_logs/%s%s.log" % (
-							self.logfile_id,
-							msg
-							)
-		print logfile
-		self.stdoutWrapper.add_logfile(logfile)
-
-	def __config_demo__(self):
-		if self.extraOptions.demo:
-			self.warmupTime=2
-			self.measurementTime=5
-			#NOTE: JJS
-			#self.sampleCount=self.measurementTime
-			self.sampleCount=1#self.measurementTime
-			self.sampleInterval=self.measurementTime
-			self.restTime=2
-			self.cooldownTime=2
-			self.targetResponseTime=10
-
-	def __parse_comma_list__(self,commaList,objtype=Decimal):
-		"""
-		Parses a comma separated list as input from the command line.  Terminates program through sys.exit() if an error is found
-		"""
-		itemList=[]
-		for item in commaList.split(","):
-			if not item.strip():
-				continue
-			try:
-				itemValue=objtype(item)
-				itemList.append(itemValue)
-			except:
-				traceback.print_exc()
-				print "ERROR: Invalid integer %s in list %s" % (item,commaList)
-				sys.exit()
-		return itemList
-
-
-	def __parse_workload_list(self):
-		if "rr" in self.extraOptions.workloads:
-			self.accessList.append(["random read",100,100])
-		if "rw" in self.extraOptions.workloads:
-			self.accessList.append(["random write",0,100])
-		if "sr" in self.extraOptions.workloads:
-			self.accessList.append(["sequential read",100,0])
-		if "segr" in self.extraOptions.workloads:
-			self.accessList.append(["segmented read",100,0])
-		if "segw" in self.extraOptions.workloads:
-			self.accessList.append(["segmented write",0,0])
-		if "sw" in self.extraOptions.workloads:
-			self.accessList.append(["sequential write",0,0])
-		if "oltp" in self.extraOptions.workloads:
-			for mix in self.mixtureList:
-				self.accessList.append(["OLTP",mix,100])
-		if "seqoltp" in self.extraOptions.workloads:
-			for mix in self.mixtureList:
-				self.accessList.append(["SEQOLTP",mix,0])
-		if "segoltp" in self.extraOptions.workloads:
-			for mix in self.mixtureList:
-				self.accessList.append(["SEGOLTP",mix,0])
-		if "custom_oltp" in self.extraOptions.workloads:
-			for mix in self.mixtureList:
-				#print self.seekPercentList
-				for perc in self.seekPercentList:
-					self.accessList.append(["CUSTOM_OLTP",mix,perc])
-
-
-	def __check_hosts_config_files__(self,hostList):
-		"""
-		Checks if all hosts in self.hostList have .disk config files
-
-		Will raise AttributeError if any problems are detected
-		"""
-
-		#If no hosts are defined, return true
-		if not hostList:
-			return 1
-
-		self.hostConfigs={}
-		self.ioengineConfigs={}
-		errors=[]
-		
-		for host in hostList:
-			if self.extraOptions.sarcapture:
-				self.capturetool.add_host(host)
-			#Replace all decimal points with underscores incase IP address was supplied
-			############
-			filelabel=host.replace(".","_")
-
-			filename="%s.disk" % filelabel
-
-			filedata=file(filename,'r').read()
-
-			if not filedata:
-				errors.append("Host %s missing file %s or file is empty" % (host,filename))
-			else:
-				#Create a list of device targets for this host
-				#####################
-				self.hostConfigs[host]=[]
-				self.ioengineConfigs[host]=[]
-
-				count=0
-				for row in filedata.split("\n"):
-					row=row.strip()
-					if not row or row[0] == "#":
-						continue
-					row=row.split()
-					#check for Windows style disk
-					if row[0].find("PHYSICALDRIVE") > -1:
-						self.hostConfigs[host].append(row[0])
-						count+=1
-					#check for unix/linux style disk
-					elif row[0].find("/dev/") > -1:
-						self.hostConfigs[host].append(row[0])
-						#Assume the last column is a logica/software defined path, 
-						#For librbd, we assume the path is <pool>.<rbdimage>
-						self.ioengineConfigs[host].append(row[-1])
-						count+=1
-					else:
-						continue
-				if not count:
-					errors.append("Host %s missing valid device files in %s" % (host,filename))
-
-		if not errors:
-			return 1
-		else:
-			for row in errors:
-				print "ERROR: %s" % row
-			raise AttributeError,"Invalid hosts config files"
-	
-
-	def add_multiple_hosts(self,hostList=[]):
-		self.hostConfigs={}
-		self.ioengineConfigs={}
-		self.__check_hosts_config_files__(hostList)
-	
-	def refresh_hosts_config_files(self,hostList):
-		self.__check_hosts_config_files__(hostList)
-
-	def setExtraOptions(self,options):
-		debug("setExtraOptions called")
-		self.extraOptions=options
-
-		if self.extraOptions.responselimit:
-			self.targetResponseTime=int(self.extraOptions.responselimit)
-
-		#Retrieve optional qdepths from the command line
-		if self.extraOptions.qdepthlist:
-			self.qdepths=self.__parse_comma_list__(self.extraOptions.qdepthlist)
-
-		if self.extraOptions.iop_override:
-			if self.extraOptions.qdepthlist:
-				print "ERROR: Unable to use qdepths and IOPS at the same time, please abort your command and use -iops or -q, not both"
-				raise AttributeError,"Unable to use qdepth and IOPS simultaneously"
-			else:
-				#Assume IOP Goal is reasonable
-				#Secondly, assume 50ms baseline latency
-				LATENCY_BASELINE=0.05
-				self.iops_override=int(self.extraOptions.iop_override)
-				#Run a single queue depth only
-				self.qdepths=[self.iops_override*LATENCY_BASELINE]
-				#if self.iops_override > 250:
-				#	self.usetimer="usetimer = true"
-				##else:
-				#	self.usetimer = "usetimer = system"
-						
-				print "LATENCY BASELINE %s" % LATENCY_BASELINE
-				print "qdepths  %s" % str(self.qdepths)
-				print "IOPS: %s" % self.iops_override
-		else:
-			self.iops_override=None
-
-		#Get the list of transfer sizes
-		if self.extraOptions.xferlist:
-			self.xferList=self.__parse_comma_list__(self.extraOptions.xferlist)
-
-		if self.extraOptions.aoConfig:
-			debug("SETTING AO CONFIG")
-			self.aoConfig=self.extraOptions.aoConfig.split(",")
-		else:
-			debug("SETTING AO CONFIG TO EMPTY")
-			debug(self.extraOptions)
-			self.aoConfig=[]
-		#get list of extra systems to monitor
-		if self.extraOptions.monlist:
-			monList=self.__parse_comma_list__(self.extraOptions.monlist,objtype=str)
-			for mon in monList:
-				if self.extraOptions.sarcapture:
-					self.capturetool.add_host(mon)
-		#Get the list of Hosts (if any)
-		if self.extraOptions.hostlist:
-			hostList=self.__parse_comma_list__(self.extraOptions.hostlist,objtype=str)
-			self.add_multiple_hosts(hostList)
-		else:
-			self.hostConfigs={}
-			self.ioengineConfigs={}
-			self.hostList=[]
-
-		#Get the list of transfer sizes
-		if self.extraOptions.skipcleanup:
-			self.skipcleanup=1
-		else:
-			self.skipcleanup=0
-
-		#Set self.fixedQdepths and disable autosensing response times
-		if self.extraOptions.fixedqd:
-			self.fixedQdepths=1
-
-		#Set self.fixedQdepths and disable autosensing response times
-		if self.extraOptions.offset:
-			self.offset = "["+self.extraOptions.offset+"]"
-		else:
-			self.offset= "[0.0,1.0]"
-
-		if self.extraOptions.seekper:
-			self.seekPercentList=self.__parse_comma_list__(self.extraOptions.seekper)
-		else:
-			#No Seek value was specified. SHould default to default beahvior according to other workload specs
-			self.seekPercentList=[-1]
-
-		#get the list of read/write mixtures to use on OLTP runs
-		if self.extraOptions.mixtures:
-			self.mixtureList=self.__parse_comma_list__(self.extraOptions.mixtures)
-		else:
-			self.mixtureList=[60,80]
-
-		#Parse workloads and read/write mixtures
-		if self.extraOptions.workloads:
-			self.accessList=[]
-			self.__parse_workload_list()
-		else:
-			self.accessList=[
-				["random read",100,100],
-				["random write",0,100],
-				["sequential read",100,0],
-				["sequential write",0,0],
-			]
-			for mix in self.mixtureList:
-				self.accessList.append(["OLTP",mix,100])
-
-		if self.extraOptions.warmup:
-			self.warmupTime=self.extraOptions.warmup
-
-		if self.extraOptions.measurement:
-			self.measurementTime=self.extraOptions.measurement
-
-		if self.extraOptions.cooldown:
-			#Rename self.restTime to self.cooldownTime
-			self.restTime=self.extraOptions.cooldown
-
-		if self.extraOptions.expmsg:
-			self.experiment_message=self.extraOptions.expmsg
-		else:
-			self.experiment_message=""
-
-		if self.extraOptions.pattern:
-			self.pattern=self.extraOptions.pattern
-		else:
-			self.pattern=0
-		if self.extraOptions.cachehit:
-			self.cachehit=self.extraOptions.cachehit.split(",")
-		else:
-			self.cachehit=[0,0]
-
-		#If no sample rate is specified, assume 1 sample over the measurement interval		
-		#NOTE JJS
-		if self.extraOptions.sampleinterval:
-			#self.sampleCount=self.extraOptions.sampleinterval
-			if self.measurementTime % self.extraOptions.sampleinterval:
-				print "######"
-				print "#ERROR: Invalid measurement and sampleinterval specified.  Measurement time must be evenly divisble by sample time"
-				print "Measurement: %s    Sample: %s" % (self.measurementTime,self.extraOptions.sampleinterval)
-				print "######"
-				sys.exit()
-			self.sampleCount=self.measurementTime/self.extraOptions.sampleinterval
-			self.sampleInterval=self.extraOptions.sampleinterval
-		else:
-			self.sampleCount=1#self.measurementTime
-			
-			self.sampleInterval=self.measurementTime
-
-		self.fioxRunTime=self.warmupTime+self.measurementTime
-		if self.extraOptions.tool:
-			if self.extraOptions.tool == "fio":
-				self.IOTool=FIO_Measurement
-				self.IOTool_text="FIO"
-			elif self.extraOptions.tool == "vdbench":
-				self.IOTool=VDBENCH_Measurement
-				self.IOTool_text="Vdbench"
-			elif self.extraOptions.tool == "vesper":
-				self.IOTool=DPold_Measurement
-				self.IOTool_text="DPold"
-			else:
-				print "ERROR: Invalid --tool value"
-		else:
-			self.IOTool=FIO_Measurement
-			self.IOTool_text="FIO"
-			#self.IOTool=FIO_Measurement
-			#self.IOTool_text="FIO"
-
-
-	def get_increment(self,qdepth):
-		#control the qdepth scaling based on the current qdepth
-		if qdepth < 256:
-			increment=32
-		elif qdepth < 512:
-			increment=64
-		elif qdepth < 1024:
-			increment=128
-		else:
-			increment=256
-			
-		return increment
-
-
-	def __get_measurement_name__(self,accessMode,xfer,readpct,seekpct):
-		if accessMode == "random read":
-			name= "Random Reads %(xfer)sKB" % vars()
-		elif accessMode == "random write":
-			name= "Random Writes %(xfer)sKB" % vars()
-		elif accessMode == "segmented read":
-			name= "Segmented Sequential Reads %(xfer)sKB" % vars()
-		elif accessMode == "sequential read":
-			name= "Sequential Reads %(xfer)sKB" % vars()
-		elif accessMode == "segmented write":
-			name= "Segmented Sequential Writes %(xfer)sKB" % vars()
-		elif accessMode == "sequential write":
-			name= "Sequential Writes %(xfer)sKB" % vars()
-		elif accessMode == "OLTP":
-			writepct=100-readpct
-			name= "OLTP %(readpct)s-%(writepct)s Reads-Writes %(xfer)sKB" % vars()
-		elif accessMode == "SEQOLTP":
-			writepct=100-readpct
-			name= "SEQUENTIAL OLTP %(readpct)s-%(writepct)s Reads-Writes %(xfer)sKB" % vars()
-		elif accessMode == "CUSTOM_OLTP":
-			writepct=100-readpct
-			name= "CUSTOM OLTP %(readpct)s / %(writepct)s %(xfer)sKB Seek %(seekpct)s" % vars()
-		else:
-			name= "ERROR: UNKNOWN <access: %(accessMode)s xfer:%(xfer)s readpct: %(readpct)s seek: %(seekpct)s percent> " % vars()	
-		return name
-
-	def __get_open_flags__(self):
-		if self.extraOptions.o_sync:
-			return "O_SYNC"
-		else:
-			return "O_DIRECT"
-
-	def __print_report_header__(self):
-		print "#HEADER"
-		if self.extraOptions.demo:
-			print "     Test Name: DEMO DEMO DEMO DEMO DEMO"
-
-		else:
-			print "     Test Name: Optimal State Performance using %s" % self.IOTool_text
-		if self.experiment_message:
-			print "EXPERIMENT: %s" % self.experiment_message
-		else:
-			print "EXPERIMENT: NO MESSAGE PROVIDED"
-		print "     Warm Up Time: %s" % self.warmupTime
-		print "     Measurement Time: %s" % self.measurementTime
-		print "     Rest Time: %s" % self.restTime
-		print "     Number of Samples: %s" % self.sampleCount
-		print "     Sample Interval: %s" % self.sampleInterval
-		print "     Response Time Limit: %sms" % self.targetResponseTime
-		print "     IO Benchmark Tool: %s" % self.IOTool_text
-		print "     Working Set Offset/limits: %s" % self.offset
-		print "     Pattern Dedupe Value: %s" % self.pattern
-		print "     Cachehit Ratio: %s" % self.cachehit
-		print "     Target open flags: %s" % self.__get_open_flags__()
-		print "     Workloads to Measure:"
-
-		if self.extraOptions.fill or self.extraOptions.fillstop:
-			print "        Fill target disks"
-
-		if self.experiment_message:
-			print "EXPERIMENT: %s" % self.experiment_message
-
-		if not self.extraOptions.fillstop:
-			i=1
-			#print self.accessList
-			for accessMode,readpct,seekpct in self.accessList:
-				for xfer in self.xferList:
-					print "         %s - %s " % (i,self.__get_measurement_name__(accessMode,xfer,readpct,seekpct))
-					i+=1
-
-		print "     command line: %s" % " ".join(sys.argv)
-		self.__print_warning_report__()
-		print "#HEADER"
-		print "#MEASUREMENTS"
-
-
-	def __print_warning_report__(self):
-		#Check for any configuration problems that may lead to errnoeous measurements
-		#for example, using a  warmup time of less than to 10 seconds, or measurement
-		#time of less than 30 seconds
-		warnings=[]
-
-		if self.extraOptions.demo:
-			warnings.append("This is a Demo/trial run only! DO NOT MAKE SIZING DECISIONS WITH THIS DATA")
-		if self.warmupTime < 60:
-			warnings.append("Warmup Time Less Than 60 seconds, Disk/Controller Cache Transients will prevent steady-state measurement")
-		if self.measurementTime < 90:
-			warnings.append("Measurement Time Less Than 90 seconds, Measurement will be influenced by transients")
-		if self.restTime < 30:
-			warnings.append("Rest Time < 30 seconds.  Cache activity after measurement completes may impact future measurements")
-		if warnings:
-			print "#WARNINGS_REPORT"
-			print ""
-			print "     All warnings should be evaluated carefully in regard to the experiment you are trying to run"
-			print "     Depending on the RAID array controller cache, long warmup times,5min+ may be required for accurate measurements"
-			print "     Rest times may also be required. Careful evaluation may need to be done to determine the optimum warmup, measurement, and rest times"
-			print ""
-			for warning in warnings:
-				print "     WARNING: %s" % warning
-			print ""
-			print "#WARNINGS_REPORT"
-	
-		
-	def __print_report_footer__(self):
-		devList=self.get_dev_list()
-		print "#FOOTER"
-		print "#Disabled fiox_discover - JJS 6/15/2018"
-		#print os.popen("./fiox_discover %s" % " ".join(devList)).read()
-		print "#FOOTER"
-
-	def run(self):
-		#warmupTime=30
-		#measurementTime=90
-		if self.extraOptions.demo:
-			self.__config_demo__()
-
-		self.__print_report_header__()
-		#Ensure that if we get any source code errors/exceptions, 
-		#we hadnle them and print the report footer
-		if self.extraOptions.fill or self.extraOptions.fillstop:
-			self.__run_fill__()
-		if not self.extraOptions.fillstop:
-			try:
-				self.__run_measurements__()
-			except KeyboardInterrupt:
-				print ""
-				print "########################"
-				print "# ERROR: USER Interrupted via keyboard - now cleaning up processess, please wait" 
-				print "########################"
-				print ""
-				self.capturetool.posttest_capture("exit")
-				self.capturetool.posttest_cleanup("exit")
-			except:
-				traceback.print_exc()
-				traceback.print_exc()
-		self.__print_report_footer__()
-
-	def __run_fill__(self):
-		#Calls to self.IOTool for fill operations are done here.  Make changes to variables being passed in as needed
-		#JJS - 10/29/2014 - Adding self.pattern  to support dedupe patterns
-		###################
-		myMeasure=self.IOTool(256,1,30,90,"fill",self.devList,readpct=0,hostConfig=self.hostConfigs,pattern=self.pattern,ioengineConfig=self.ioengineConfigs)
-		myMeasure.setExtraOptions(self.extraOptions)
-		
-		print "#FILL"
-		print myMeasure
-		myMeasure.fill()
-		print "#FILL"
-
-	def __run_measurements__(self):
-		"""
-		This method is runs the specified measurements in the order specified from the command line
-		
-		It is responsible for initializing a seprate instance of the Tool (self.IOTool) for each qdepth
-		value to be tested.
-		"""
-		self.capturetool.set_sample_parms(1,self.warmupTime+self.measurementTime)
-
-		qdepthLimit=2048
-		for accessMode,readpct,seekpct in self.accessList:
-			for xfer in self.xferList:
-				print "-"
-				print "Date: %s" % time.ctime()
-				print "-"
-				print "TEST: %s" % self.__get_measurement_name__(accessMode,xfer,readpct,seekpct)
-
-				if self.histogram_buckets:
-					print "p io/s mb/s rt        Percentile %s" % ",".join(map(str,self.histogram_buckets))
-				else:
-					print "p io/s mb/s rt        cpuUser cpuSystem"
-
-				#Iterate through all the queudepths.
-				#When we hit a response time that exceeds variable self.targetResponseTime,
-				#break out of the loop
-				##########################
-				i=0	#used for index into qdepth
-
-				#create a copy of self.qdepths
-				qdepthList=list(self.qdepths)
-
-				while i < len(qdepthList):
-					qdepth=qdepthList[i]
-
-					if qdepthLimit and qdepth > qdepthLimit:
-						i+=1
-						continue
-
-					#myMeasure=FIO_Measurement(xfer,qdepth,self.warmupTime,self.measurementTime,accessMode,self.devList)
-					debug("READ PERCENT AT INIT %s" % readpct,2)
-
-					#capture_measurement_time=time.ctime().replace(":","").replace(" ","_")
-					capture_measurementname="%s.%s.m%s.x%s.q%s" % (
-											self.get_logfile_id(),
-											accessMode.replace(" ",""),
-											readpct,
-											xfer,
-											qdepth
-											)
-
-					self.capturetool.pretest_capture(capture_measurementname)
-					myMeasure=self.IOTool(
-								xfer,
-								qdepth,
-								self.warmupTime,
-								self.measurementTime,
-								accessMode,
-								self.devList,
-								readpct=readpct,
-								offset=self.offset,
-								seekpct=seekpct,
-								sampleCount=self.sampleCount,
-								hostConfig=self.hostConfigs,
-								ioengineConfig=self.ioengineConfigs,
-								aoConfig=self.aoConfig,
-								histogram_buckets=self.histogram_buckets,
-								iops_override=self.iops_override,
-								pattern=self.pattern,
-								cachehit=self.cachehit
-								)
-
-
-					myMeasure.setExtraOptions(self.extraOptions)
-					runTime=time.time()
-					iops,mbs,rt,cpu_user,cpu_system=myMeasure.run()
-
-					# If we encountered an error, limit max qdepth to previous qdepth
-					# This is usually a server config issue, like max open processes, memory, etc
-					############
-					if myMeasure.getErrorFound():
-						try:
-							if i > 1:
-								qdepthLimit=qdepthList[i-1]
-							else:
-								qdepthLimit=qdepthList[i]
-							print "## ERROR: Limiting Max qdepth to %s to reduce future errors" % qdepthLimit
-						except IndexError:
-							print "## ERROR: Insufficient qdepths <2 to handle errors, forcing measurement end"
-							break
-		
-					runTime=time.time() - runTime
-
-					self.capturetool.posttest_capture(capture_measurementname)
-
-					#Get the qdepth actually being used. If 
-					actualqdepth=myMeasure.get_qdepth()
-
-					r_and_w_percentiles=""
-					if myMeasure.supports_percentiles():
-						r_and_w_percentiles=myMeasure.get_percentiles()
-
-					indepthperf="/root/fiox/op_logs/perflogs/%s.csv" % capture_measurementname
-
-					if myMeasure.supports_detailed_results():
-						read_iops,read_mbs,read_latency,write_iops,write_mbs,write_latency=myMeasure.get_detailed_results()
-						print "%s %s %s %s  r %s %s %s   w %s %s %s %s	\t%s" % (actualqdepth,iops,mbs,rt,read_iops,read_mbs,read_latency,write_iops,write_mbs,write_latency,r_and_w_percentiles,indepthperf)
-
-					else:
-						print "%s %s %s %s %s %s %s	\t%s" % (actualqdepth,iops,mbs,rt,cpu_user,cpu_system,r_and_w_percentiles,indepthperf)
-
-					if not self.fixedQdepths:
-						if i == len(qdepthList)-1:
-							if Decimal(str(rt).replace("ms","")) < self.targetResponseTime:
-								increment=self.get_increment(qdepth)
-								qdepthList.append(qdepth+increment)
-							else:
-								break
-					if not self.skipcleanup:
-						myMeasure.cleanup()
-
-					self.capturetool.posttest_cleanup(capture_measurementname)
-					time.sleep(self.restTime)
-					i+=1
-		print "#MEASUREMENTS"
-		return 1
+                parser.add_option("--sar",		dest="sarcapture",	help="Enables capture of 1 second granular SR data for all [hosts|localhost]",action='store_true'),
+                parser.add_option("--mons",		dest="monlist",		help="List of extra systems like ceph nodes to monitor",type="string"),
+                parser.add_option("--histo_timeseries",	dest="histo_timeseries",help="capture histogram timeseries for each measurement",action='store_true'),
+                parser.add_option("--ao_input",		dest="aoConfig",	help="Filename and ao policy to use.  --ao_input <aosample.csv>,<evening_policy>,<total_capacity_in_gb>.  Default is diabled",type="string"),
+                parser.add_option("-x","--xferlist",	dest="xferlist",	help="List of I/O transfer sizes to use.  Default: [8,128]",type="string"),
+                parser.add_option("-q","--tl",		dest="qdepthlist",	help="List of Qdepths to start with. Default: [1,2,4,8,12,16,32,64]",type="string"),
+                parser.add_option("-s","--sizeOfFile",	dest="size_of_files",	help="Specify the the size of each file created in each directory, when creating files for first time.")
+                #parser.add_option("-n","--numOfFiles",	dest="num_of_files",	help="Specify the the number of files to create of size -s")
+                parser.add_option("-r","--rsplimit",	dest="responselimit",	help="Response time in milliseconds to give up measuring past, default 60, (60ms)", type="int")
+                parser.add_option("--demo",		dest="demo",		help="Overrides parameters to ensure a very short duration - For Demo purposes only. Do NOT make sizing decisions based on these results",action="store_true")
+                parser.add_option("--fq","--fixedqd",	dest="fixedqd",		help="Use Fixed queue depths, and ignore response time limits",action="store_true")
+                parser.add_option("--iops","--iopgoal",	dest="iop_override",	help="Specify a single IOP Goal to use, intended for use with aotest.py.  Not compatible with --fq or -q",type="int")
+                parser.add_option("--wu",		dest="warmup",		help="Warmup time before, measurement begins, in seconds.  default 30 (30s)",type="int")
+                parser.add_option("--me",		dest="measurement",	help="Measurement time - length of time to ru nmeasurement, in seconds. default 60 (60s)",type="int")
+                parser.add_option("--cd",		dest="cooldown",	help="Cooldown (Rest Time) between measurements to let system recover, default 30 (30s)",type="int")
+                parser.add_option("--sa",		dest="sampleinterval",	help="Length of time for each sample.  Defaults to measurement period",type="int")
+                parser.add_option("--tool",		dest="tool",		help="specifies name of tool to use: [fio|vdbench] default: fio",type="string")
+                parser.add_option("--all",		dest="all",		help="include --rr, --rw, --sr,--sw,--oltp",action='store_true')
+                parser.add_option("--rr","--ranread",	dest="workloads",	help="Measure random reads",action="callback",callback=self.__arg_parse_workload__)
+                parser.add_option("--rw","--ranwrite",	dest="workloads",	help="Measure random writes",action="callback",callback=self.__arg_parse_workload__)
+                parser.add_option("--sr","--seqread",	dest="workloads",	help="Measure sequential reads",action="callback",callback=self.__arg_parse_workload__)
+                parser.add_option("--sw","--seqwrite",	dest="workloads",	help="Measure sequential writes",action="callback",callback=self.__arg_parse_workload__)
+                parser.add_option("--segr","--segread",	dest="workloads",	help="Measure segmented sequential reads ( DP only!)",action="callback",callback=self.__arg_parse_workload__)
+                parser.add_option("--segw","--segwrite",dest="workloads",	help="Measure segmented sequential writes ( DP only!)",action="callback",callback=self.__arg_parse_workload__)
+                parser.add_option("--oltp",		dest="workloads",	help="Measure Random (mixed reads/writes) with specified percentages (-m --mix)",action="callback",callback=self.__arg_parse_workload__)
+                parser.add_option("--custom_oltp",	dest="workloads",	help="Measure Random (mixed reads/writes) with specified percentages (-m --mix) and seek percent(--seekper)",action="callback",callback=self.__arg_parse_workload__)
+                parser.add_option("--seqoltp",		dest="workloads",	help="Measure Sequential (mixed reads/writes) specified percentages (-m --mix)",action="callback",callback=self.__arg_parse_workload__)
+                parser.add_option("--segoltp",		dest="workloads",	help="Measure segmented Sequential (mixed reads/writes) specified percentages (-m --mix) ( DO only!)",action="callback",callback=self.__arg_parse_workload__)
+                parser.add_option("-m","--mix",		dest="mixtures",	help="Override default Read percentage for OLTP measurements.  80,60 means 1x80% read measurement, 1x60% read measurement",type="string")
+                parser.add_option("--seekper",		dest="seekper",		help="Percentage of seeking for custom oltp",type="string")
+                parser.add_option("-o","--offset",	dest="offset",		help="Limit addressable space to a set of block multiple addressess  (DP only!)",type="string")
+                parser.add_option("--o_sync",		dest="o_sync",		help="Open devices/files using O_SYNC instead of O_DIRECT",action="store_true")
+                parser.add_option("--fill",		dest="fill",		help="Fill the device/files specified using a sequential pattern then begin measurement",action="store_true")
+                parser.add_option("--fillstop",		dest="fillstop",	help="Same as --fill, but stop after fill completes. Do not run measurements",action="store_true")
+                parser.add_option("--ds","--debug_skipcleanup",	dest="skipcleanup",	help="Skips cleanup of workload generator files.",action="store_true"),
+                parser.add_option("--msg",		dest="expmsg",		help="Specify message describing this experiment.  Added to logfile",type="string")
+                parser.add_option("--pattern",		dest="pattern",		help="Specify target dedupe ratio. 0=deault,1=1:1,2=2:1,3=3:1 default is default behavior for specified tools",type="int")
+                parser.add_option("--cachehit",		dest="cachehit",	help="Specifiy cachehit and depth ratio separated by comma.  --cachehit 10,100 (10% hit, 100 depth) Disabled by default.  ",type="string")
+                parser.add_option("--align",		dest="align",		help="Override alignment, specify blocksize of alignment in bytes ",type="string")
+                if cli_args:
+                    (options,args) = parser.parse_args(args=cli_args)
+                else:
+                    (options,args) = parser.parse_args()
+
+                debug(options,1)
+                debug(args,1)
+                print options
+                print args
+
+                self.devList=args
+                #if options.hostlist == None:
+                #	options.hostlist='127.0.0.1'
+
+                if len(args) < 1 and options.hostlist == None and not cli_args:
+                    print "Exiting"
+                    return 0
+                self.setExtraOptions(options)
+
+                self.logfile_config_name()
+
+                return 1
+
+        def get_dev_list(self):
+            return self.devList
+
+
+        def get_logfile_id(self,testclass="op",force=False):
+            if self.logfile_id == None or force == True:
+                self.logfile_id="%s.%s" % (testclass,time.strftime("%y%m%d.%H%M%S"))
+                return self.logfile_id
+
+        def logfile_config_name(self):
+
+                try: os.mkdir("./op_logs/")
+                except:pass
+
+                if self.experiment_message.strip():
+                    msg=".%s" % self.experiment_message.replace(" ","_").strip()
+                    self.get_logfile_id(testclass="op")
+                else:
+                    msg=""
+                    self.get_logfile_id(testclass="exp")
+
+                logfile="./op_logs/%s%s.log" % (
+                        self.logfile_id,
+                        msg
+                        )
+                print logfile
+                self.stdoutWrapper.add_logfile(logfile)
+
+        def __config_demo__(self):
+            if self.extraOptions.demo:
+                self.warmupTime=2
+                self.measurementTime=5
+                #NOTE: JJS
+                #self.sampleCount=self.measurementTime
+                self.sampleCount=1#self.measurementTime
+                self.sampleInterval=self.measurementTime
+                self.restTime=2
+                self.cooldownTime=2
+                self.targetResponseTime=10
+
+        def __parse_comma_list__(self,commaList,objtype=Decimal):
+                """
+                Parses a comma separated list as input from the command line.  Terminates program through sys.exit() if an error is found
+                """
+                itemList=[]
+                for item in commaList.split(","):
+                        if not item.strip():
+                                continue
+                        try:
+                                itemValue=objtype(item)
+                                itemList.append(itemValue)
+                        except:
+                                traceback.print_exc()
+                                print "ERROR: Invalid integer %s in list %s" % (item,commaList)
+                                sys.exit()
+                return itemList
+
+
+        def __parse_workload_list(self):
+                if "rr" in self.extraOptions.workloads:
+                        self.accessList.append(["random read",100,100])
+                if "rw" in self.extraOptions.workloads:
+                        self.accessList.append(["random write",0,100])
+                if "sr" in self.extraOptions.workloads:
+                        self.accessList.append(["sequential read",100,0])
+                if "segr" in self.extraOptions.workloads:
+                        self.accessList.append(["segmented read",100,0])
+                if "segw" in self.extraOptions.workloads:
+                        self.accessList.append(["segmented write",0,0])
+                if "sw" in self.extraOptions.workloads:
+                        self.accessList.append(["sequential write",0,0])
+                if "oltp" in self.extraOptions.workloads:
+                        for mix in self.mixtureList:
+                                self.accessList.append(["OLTP",mix,100])
+                if "seqoltp" in self.extraOptions.workloads:
+                        for mix in self.mixtureList:
+                                self.accessList.append(["SEQOLTP",mix,0])
+                if "segoltp" in self.extraOptions.workloads:
+                        for mix in self.mixtureList:
+                                self.accessList.append(["SEGOLTP",mix,0])
+                if "custom_oltp" in self.extraOptions.workloads:
+                        for mix in self.mixtureList:
+                                #print self.seekPercentList
+                                for perc in self.seekPercentList:
+                                        self.accessList.append(["CUSTOM_OLTP",mix,perc])
+
+
+        def __check_hosts_config_files__(self,hostList):
+                """
+                Checks if all hosts in self.hostList have .disk config files
+
+                Will raise AttributeError if any problems are detected
+                """
+
+                #If no hosts are defined, return true
+                if not hostList:
+                        return 1
+
+                self.hostConfigs={}
+                self.ioengineConfigs={}
+                errors=[]
+
+                for host in hostList:
+                        if self.extraOptions.sarcapture:
+                                self.capturetool.add_host(host)
+                        #Replace all decimal points with underscores incase IP address was supplied
+                        ############
+                        filelabel=host.replace(".","_")
+
+                        filename="%s.disk" % filelabel
+
+                        filedata=file(filename,'r').read()
+
+                        if not filedata:
+                                errors.append("Host %s missing file %s or file is empty" % (host,filename))
+                        else:
+                                #Create a list of device targets for this host
+                                #####################
+                                self.hostConfigs[host]=[]
+                                self.ioengineConfigs[host]=[]
+
+                                count=0
+                                for row in filedata.split("\n"):
+                                        row=row.strip()
+                                        if not row or row[0] == "#":
+                                                continue
+                                        row=row.split()
+                                        #check for Windows style disk
+                                        if row[0].find("PHYSICALDRIVE") > -1:
+                                                self.hostConfigs[host].append(row[0])
+                                                count+=1
+                                        #check for unix/linux style disk
+                                        elif row[0].find("/dev/") > -1:
+                                                self.hostConfigs[host].append(row[0])
+                                                #Assume the last column is a logica/software defined path, 
+                                                #For librbd, we assume the path is <pool>.<rbdimage>
+                                                self.ioengineConfigs[host].append(row[-1])
+                                                count+=1
+                                        else:
+                                                continue
+                                if not count:
+                                        errors.append("Host %s missing valid device files in %s" % (host,filename))
+
+                if not errors:
+                        return 1
+                else:
+                        for row in errors:
+                                print "ERROR: %s" % row
+                        raise AttributeError,"Invalid hosts config files"
+
+
+        def add_multiple_hosts(self,hostList=[]):
+                self.hostConfigs={}
+                self.ioengineConfigs={}
+                self.__check_hosts_config_files__(hostList)
+
+        def refresh_hosts_config_files(self,hostList):
+                self.__check_hosts_config_files__(hostList)
+
+        def setExtraOptions(self,options):
+                debug("setExtraOptions called")
+                self.extraOptions=options
+
+                if self.extraOptions.responselimit:
+                        self.targetResponseTime=int(self.extraOptions.responselimit)
+
+                #Retrieve optional qdepths from the command line
+                if self.extraOptions.qdepthlist:
+                        self.qdepths=self.__parse_comma_list__(self.extraOptions.qdepthlist)
+
+                if self.extraOptions.iop_override:
+                        if self.extraOptions.qdepthlist:
+                                print "ERROR: Unable to use qdepths and IOPS at the same time, please abort your command and use -iops or -q, not both"
+                                raise AttributeError,"Unable to use qdepth and IOPS simultaneously"
+                        else:
+                                #Assume IOP Goal is reasonable
+                                #Secondly, assume 50ms baseline latency
+                                LATENCY_BASELINE=0.05
+                                self.iops_override=int(self.extraOptions.iop_override)
+                                #Run a single queue depth only
+                                self.qdepths=[self.iops_override*LATENCY_BASELINE]
+                                #if self.iops_override > 250:
+                                #	self.usetimer="usetimer = true"
+                                ##else:
+                                #	self.usetimer = "usetimer = system"
+
+                                print "LATENCY BASELINE %s" % LATENCY_BASELINE
+                                print "qdepths  %s" % str(self.qdepths)
+                                print "IOPS: %s" % self.iops_override
+                else:
+                        self.iops_override=None
+
+                #Get the list of transfer sizes
+                if self.extraOptions.xferlist:
+                        self.xferList=self.__parse_comma_list__(self.extraOptions.xferlist)
+
+                if self.extraOptions.aoConfig:
+                        debug("SETTING AO CONFIG")
+                        self.aoConfig=self.extraOptions.aoConfig.split(",")
+                else:
+                        debug("SETTING AO CONFIG TO EMPTY")
+                        debug(self.extraOptions)
+                        self.aoConfig=[]
+                #get list of extra systems to monitor
+                if self.extraOptions.monlist:
+                        monList=self.__parse_comma_list__(self.extraOptions.monlist,objtype=str)
+                        for mon in monList:
+                                if self.extraOptions.sarcapture:
+                                        self.capturetool.add_host(mon)
+                #Get the list of Hosts (if any)
+                if self.extraOptions.hostlist:
+                        hostList=self.__parse_comma_list__(self.extraOptions.hostlist,objtype=str)
+                        self.add_multiple_hosts(hostList)
+                else:
+                        self.hostConfigs={}
+                        self.ioengineConfigs={}
+                        self.hostList=[]
+
+                #Get the list of transfer sizes
+                if self.extraOptions.skipcleanup:
+                        self.skipcleanup=1
+                else:
+                        self.skipcleanup=0
+
+                #Set self.fixedQdepths and disable autosensing response times
+                if self.extraOptions.fixedqd:
+                        self.fixedQdepths=1
+
+                #Set self.fixedQdepths and disable autosensing response times
+                if self.extraOptions.offset:
+                        self.offset = "["+self.extraOptions.offset+"]"
+                else:
+                        self.offset= "[0.0,1.0]"
+
+                if self.extraOptions.seekper:
+                        self.seekPercentList=self.__parse_comma_list__(self.extraOptions.seekper)
+                else:
+                        #No Seek value was specified. SHould default to default beahvior according to other workload specs
+                        self.seekPercentList=[-1]
+
+                #get the list of read/write mixtures to use on OLTP runs
+                if self.extraOptions.mixtures:
+                        self.mixtureList=self.__parse_comma_list__(self.extraOptions.mixtures)
+                else:
+                        self.mixtureList=[60,80]
+
+                #Parse workloads and read/write mixtures
+                if self.extraOptions.workloads:
+                        self.accessList=[]
+                        self.__parse_workload_list()
+                else:
+                        self.accessList=[
+                                ["random read",100,100],
+                                ["random write",0,100],
+                                ["sequential read",100,0],
+                                ["sequential write",0,0],
+                        ]
+                        for mix in self.mixtureList:
+                                self.accessList.append(["OLTP",mix,100])
+
+                if self.extraOptions.warmup:
+                        self.warmupTime=self.extraOptions.warmup
+
+                if self.extraOptions.measurement:
+                        self.measurementTime=self.extraOptions.measurement
+
+                if self.extraOptions.cooldown:
+                        #Rename self.restTime to self.cooldownTime
+                        self.restTime=self.extraOptions.cooldown
+
+                if self.extraOptions.expmsg:
+                        self.experiment_message=self.extraOptions.expmsg
+                else:
+                        self.experiment_message=""
+
+                if self.extraOptions.pattern:
+                        self.pattern=self.extraOptions.pattern
+                else:
+                        self.pattern=0
+                if self.extraOptions.cachehit:
+                        self.cachehit=self.extraOptions.cachehit.split(",")
+                else:
+                        self.cachehit=[0,0]
+
+                #If no sample rate is specified, assume 1 sample over the measurement interval		
+                #NOTE JJS
+                if self.extraOptions.sampleinterval:
+                        #self.sampleCount=self.extraOptions.sampleinterval
+                        if self.measurementTime % self.extraOptions.sampleinterval:
+                                print "######"
+                                print "#ERROR: Invalid measurement and sampleinterval specified.  Measurement time must be evenly divisble by sample time"
+                                print "Measurement: %s    Sample: %s" % (self.measurementTime,self.extraOptions.sampleinterval)
+                                print "######"
+                                sys.exit()
+                        self.sampleCount=self.measurementTime/self.extraOptions.sampleinterval
+                        self.sampleInterval=self.extraOptions.sampleinterval
+                else:
+                        self.sampleCount=1#self.measurementTime
+
+                        self.sampleInterval=self.measurementTime
+
+                self.fioxRunTime=self.warmupTime+self.measurementTime
+                if self.extraOptions.tool:
+                        if self.extraOptions.tool == "fio":
+                                self.IOTool=FIO_Measurement
+                                self.IOTool_text="FIO"
+                        elif self.extraOptions.tool == "vdbench":
+                                self.IOTool=VDBENCH_Measurement
+                                self.IOTool_text="Vdbench"
+                        elif self.extraOptions.tool == "vesper":
+                                self.IOTool=DPold_Measurement
+                                self.IOTool_text="DPold"
+                        else:
+                                print "ERROR: Invalid --tool value"
+                else:
+                        self.IOTool=FIO_Measurement
+                        self.IOTool_text="FIO"
+                        #self.IOTool=FIO_Measurement
+                        #self.IOTool_text="FIO"
+
+
+        def get_increment(self,qdepth):
+                #control the qdepth scaling based on the current qdepth
+                if qdepth < 256:
+                        increment=32
+                elif qdepth < 512:
+                        increment=64
+                elif qdepth < 1024:
+                        increment=128
+                else:
+                        increment=256
+
+                return increment
+
+
+        def __get_measurement_name__(self,accessMode,xfer,readpct,seekpct):
+                if accessMode == "random read":
+                        name= "Random Reads %(xfer)sKB" % vars()
+                elif accessMode == "random write":
+                        name= "Random Writes %(xfer)sKB" % vars()
+                elif accessMode == "segmented read":
+                        name= "Segmented Sequential Reads %(xfer)sKB" % vars()
+                elif accessMode == "sequential read":
+                        name= "Sequential Reads %(xfer)sKB" % vars()
+                elif accessMode == "segmented write":
+                        name= "Segmented Sequential Writes %(xfer)sKB" % vars()
+                elif accessMode == "sequential write":
+                        name= "Sequential Writes %(xfer)sKB" % vars()
+                elif accessMode == "OLTP":
+                        writepct=100-readpct
+                        name= "OLTP %(readpct)s-%(writepct)s Reads-Writes %(xfer)sKB" % vars()
+                elif accessMode == "SEQOLTP":
+                        writepct=100-readpct
+                        name= "SEQUENTIAL OLTP %(readpct)s-%(writepct)s Reads-Writes %(xfer)sKB" % vars()
+                elif accessMode == "CUSTOM_OLTP":
+                        writepct=100-readpct
+                        name= "CUSTOM OLTP %(readpct)s / %(writepct)s %(xfer)sKB Seek %(seekpct)s" % vars()
+                else:
+                        name= "ERROR: UNKNOWN <access: %(accessMode)s xfer:%(xfer)s readpct: %(readpct)s seek: %(seekpct)s percent> " % vars()	
+                return name
+
+        def __get_open_flags__(self):
+                if self.extraOptions.o_sync:
+                        return "O_SYNC"
+                else:
+                        return "O_DIRECT"
+
+        def __print_report_header__(self):
+                print "#HEADER"
+                if self.extraOptions.demo:
+                        print "     Test Name: DEMO DEMO DEMO DEMO DEMO"
+
+                else:
+                        print "     Test Name: Optimal State Performance using %s" % self.IOTool_text
+                if self.experiment_message:
+                        print "EXPERIMENT: %s" % self.experiment_message
+                else:
+                        print "EXPERIMENT: NO MESSAGE PROVIDED"
+                print "     Warm Up Time: %s" % self.warmupTime
+                print "     Measurement Time: %s" % self.measurementTime
+                print "     Rest Time: %s" % self.restTime
+                print "     Number of Samples: %s" % self.sampleCount
+                print "     Sample Interval: %s" % self.sampleInterval
+                print "     Response Time Limit: %sms" % self.targetResponseTime
+                print "     IO Benchmark Tool: %s" % self.IOTool_text
+                print "     Working Set Offset/limits: %s" % self.offset
+                print "     Pattern Dedupe Value: %s" % self.pattern
+                print "     Cachehit Ratio: %s" % self.cachehit
+                print "     Target open flags: %s" % self.__get_open_flags__()
+                print "     Workloads to Measure:"
+
+                if self.extraOptions.fill or self.extraOptions.fillstop:
+                        print "        Fill target disks"
+
+                if self.experiment_message:
+                        print "EXPERIMENT: %s" % self.experiment_message
+
+                if not self.extraOptions.fillstop:
+                        i=1
+                        #print self.accessList
+                        for accessMode,readpct,seekpct in self.accessList:
+                                for xfer in self.xferList:
+                                        print "         %s - %s " % (i,self.__get_measurement_name__(accessMode,xfer,readpct,seekpct))
+                                        i+=1
+
+                print "     command line: %s" % " ".join(sys.argv)
+                self.__print_warning_report__()
+                print "#HEADER"
+                print "#MEASUREMENTS"
+
+
+        def __print_warning_report__(self):
+                #Check for any configuration problems that may lead to errnoeous measurements
+                #for example, using a  warmup time of less than to 10 seconds, or measurement
+                #time of less than 30 seconds
+                warnings=[]
+
+                if self.extraOptions.demo:
+                        warnings.append("This is a Demo/trial run only! DO NOT MAKE SIZING DECISIONS WITH THIS DATA")
+                if self.warmupTime < 60:
+                        warnings.append("Warmup Time Less Than 60 seconds, Disk/Controller Cache Transients will prevent steady-state measurement")
+                if self.measurementTime < 90:
+                        warnings.append("Measurement Time Less Than 90 seconds, Measurement will be influenced by transients")
+                if self.restTime < 30:
+                        warnings.append("Rest Time < 30 seconds.  Cache activity after measurement completes may impact future measurements")
+                if warnings:
+                        print "#WARNINGS_REPORT"
+                        print ""
+                        print "     All warnings should be evaluated carefully in regard to the experiment you are trying to run"
+                        print "     Depending on the RAID array controller cache, long warmup times,5min+ may be required for accurate measurements"
+                        print "     Rest times may also be required. Careful evaluation may need to be done to determine the optimum warmup, measurement, and rest times"
+                        print ""
+                        for warning in warnings:
+                                print "     WARNING: %s" % warning
+                        print ""
+                        print "#WARNINGS_REPORT"
+
+
+        def __print_report_footer__(self):
+                devList=self.get_dev_list()
+                print "#FOOTER"
+                print "#Disabled fiox_discover - JJS 6/15/2018"
+                #print os.popen("./fiox_discover %s" % " ".join(devList)).read()
+                print "#FOOTER"
+
+        def run(self):
+                #warmupTime=30
+                #measurementTime=90
+                if self.extraOptions.demo:
+                        self.__config_demo__()
+
+                self.__print_report_header__()
+                #Ensure that if we get any source code errors/exceptions, 
+                #we hadnle them and print the report footer
+                if self.extraOptions.fill or self.extraOptions.fillstop:
+                        self.__run_fill__()
+                if not self.extraOptions.fillstop:
+                        try:
+                                self.__run_measurements__()
+                        except KeyboardInterrupt:
+                                print ""
+                                print "########################"
+                                print "# ERROR: USER Interrupted via keyboard - now cleaning up processess, please wait" 
+                                print "########################"
+                                print ""
+                                self.capturetool.posttest_capture("exit")
+                                self.capturetool.posttest_cleanup("exit")
+                        except:
+                                traceback.print_exc()
+                                traceback.print_exc()
+                self.__print_report_footer__()
+
+        def __run_fill__(self):
+                #Calls to self.IOTool for fill operations are done here.  Make changes to variables being passed in as needed
+                #JJS - 10/29/2014 - Adding self.pattern  to support dedupe patterns
+                ###################
+                myMeasure=self.IOTool(256,1,30,90,"fill",self.devList,readpct=0,hostConfig=self.hostConfigs,pattern=self.pattern,ioengineConfig=self.ioengineConfigs)
+                myMeasure.setExtraOptions(self.extraOptions)
+
+                print "#FILL"
+                print myMeasure
+                myMeasure.fill()
+                print "#FILL"
+
+        def __run_measurements__(self):
+                """
+                This method is runs the specified measurements in the order specified from the command line
+
+                It is responsible for initializing a seprate instance of the Tool (self.IOTool) for each qdepth
+                value to be tested.
+                """
+                self.capturetool.set_sample_parms(1,self.warmupTime+self.measurementTime)
+
+                qdepthLimit=2048
+                for accessMode,readpct,seekpct in self.accessList:
+                        for xfer in self.xferList:
+                                print "-"
+                                print "Date: %s" % time.ctime()
+                                print "-"
+                                print "TEST: %s" % self.__get_measurement_name__(accessMode,xfer,readpct,seekpct)
+
+                                if self.histogram_buckets:
+                                        print "p io/s mb/s rt        Percentile %s" % ",".join(map(str,self.histogram_buckets))
+                                else:
+                                        print "p io/s mb/s rt        cpuUser cpuSystem"
+
+                                #Iterate through all the queudepths.
+                                #When we hit a response time that exceeds variable self.targetResponseTime,
+                                #break out of the loop
+                                ##########################
+                                i=0	#used for index into qdepth
+
+                                #create a copy of self.qdepths
+                                qdepthList=list(self.qdepths)
+
+                                while i < len(qdepthList):
+                                        qdepth=qdepthList[i]
+
+                                        if qdepthLimit and qdepth > qdepthLimit:
+                                                i+=1
+                                                continue
+
+                                        #myMeasure=FIO_Measurement(xfer,qdepth,self.warmupTime,self.measurementTime,accessMode,self.devList)
+                                        debug("READ PERCENT AT INIT %s" % readpct,2)
+
+                                        #capture_measurement_time=time.ctime().replace(":","").replace(" ","_")
+                                        capture_measurementname="%s.%s.m%s.x%s.q%s" % (
+                                                                                        self.get_logfile_id(),
+                                                                                        accessMode.replace(" ",""),
+                                                                                        readpct,
+                                                                                        xfer,
+                                                                                        qdepth
+                                                                                        )
+
+                                        self.capturetool.pretest_capture(capture_measurementname)
+                                        myMeasure=self.IOTool(
+                                                                xfer,
+                                                                qdepth,
+                                                                self.warmupTime,
+                                                                self.measurementTime,
+                                                                accessMode,
+                                                                self.devList,
+                                                                readpct=readpct,
+                                                                offset=self.offset,
+                                                                seekpct=seekpct,
+                                                                sampleCount=self.sampleCount,
+                                                                hostConfig=self.hostConfigs,
+                                                                ioengineConfig=self.ioengineConfigs,
+                                                                aoConfig=self.aoConfig,
+                                                                histogram_buckets=self.histogram_buckets,
+                                                                iops_override=self.iops_override,
+                                                                pattern=self.pattern,
+                                                                cachehit=self.cachehit
+                                                                )
+
+
+                                        myMeasure.setExtraOptions(self.extraOptions)
+                                        runTime=time.time()
+                                        iops,mbs,rt,cpu_user,cpu_system=myMeasure.run()
+
+                                        # If we encountered an error, limit max qdepth to previous qdepth
+                                        # This is usually a server config issue, like max open processes, memory, etc
+                                        ############
+                                        if myMeasure.getErrorFound():
+                                                try:
+                                                        if i > 1:
+                                                                qdepthLimit=qdepthList[i-1]
+                                                        else:
+                                                                qdepthLimit=qdepthList[i]
+                                                        print "## ERROR: Limiting Max qdepth to %s to reduce future errors" % qdepthLimit
+                                                except IndexError:
+                                                        print "## ERROR: Insufficient qdepths <2 to handle errors, forcing measurement end"
+                                                        break
+
+                                        runTime=time.time() - runTime
+
+                                        capturetool_output=self.capturetool.posttest_capture(capture_measurementname)
+
+                                        #Get the qdepth actually being used. If 
+                                        actualqdepth=myMeasure.get_qdepth()
+
+                                        r_and_w_percentiles=""
+                                        if myMeasure.supports_percentiles():
+                                                r_and_w_percentiles=myMeasure.get_percentiles()
+
+                                        indepthperf="/root/fiox/op_logs/perflogs/%s.csv" % capture_measurementname
+
+                                        if myMeasure.supports_detailed_results():
+                                                read_iops,read_mbs,read_latency,write_iops,write_mbs,write_latency=myMeasure.get_detailed_results()
+                                                print "%s %s %s %s  r %s %s %s   w %s %s %s %s	\t%s" % (actualqdepth,iops,mbs,rt,read_iops,read_mbs,read_latency,write_iops,write_mbs,write_latency,r_and_w_percentiles,indepthperf)
+
+                                        else:
+                                                print "%s %s %s %s %s %s %s	\t%s" % (actualqdepth,iops,mbs,rt,cpu_user,cpu_system,r_and_w_percentiles,indepthperf)
+
+                                        if capturetool_output != None:
+                                            print "#############################"
+                                            print capturetool_output
+                                            print "#############################"
+
+                                        if not self.fixedQdepths:
+                                                if i == len(qdepthList)-1:
+                                                        if Decimal(str(rt).replace("ms","")) < self.targetResponseTime:
+                                                                increment=self.get_increment(qdepth)
+                                                                qdepthList.append(qdepth+increment)
+                                                        else:
+                                                                break
+                                        if not self.skipcleanup:
+                                                myMeasure.cleanup()
+
+                                        self.capturetool.posttest_cleanup(capture_measurementname)
+                                        time.sleep(self.restTime)
+                                        i+=1
+                print "#MEASUREMENTS"
+                return 1
 
 class PerformanceFramework(OptimalPerformance):
-	def __init__(self,*args,**kargs):
-		OptimalPerformance.__init__(self,*args,**kargs)
+        def __init__(self,*args,**kargs):
+                OptimalPerformance.__init__(self,*args,**kargs)
 
-	def section_print(self,text):
-		print "#%s" % text
-
-
-	def prefill(self):
-		print "Running fill"
-		self.__run_fill__()
-		print "Fill complete"
-	def poll(self):
-		try:
-			if self.workload:
-				return self.workload.poll()
-			else:
-				return -1
-		except:
-			traceback.print_exc()
-			return -1
+        def section_print(self,text):
+                print "#%s" % text
 
 
-	def start_workload(self,accessMode=None,readpct=None,seekpct=None,xfer=None,qdepth=None,extra="",forkfill=0):
-		if not accessMode:
-			accessMode=self.accessList[0][0]
-		if not readpct:
-			readpct=self.accessList[0][1]
-		if not seekpct:
-			seekpct=self.accessList[0][2]
-		if not qdepth:
-			qdepth=self.qdepths[0]
-		if not xfer:
-			xfer=self.xferList[0]
-		iops_override=self.iops_override
-		debug("Executiong FIOX and VESPER via Performance Framework")
-		self.workload=self.IOTool(
-					xfer,
-					qdepth,
-					self.warmupTime,
-					self.measurementTime,
-					accessMode,
-					self.devList,
-					readpct=readpct,
-					offset=self.offset,
-					seekpct=seekpct,
-					aoConfig=self.aoConfig,
-					sampleCount=self.sampleCount,
-					hostConfig=self.hostConfigs,
-					ioengineConfig=self.ioengineConfigs,
-					extralabel=extra,
-					pattern=self.pattern,
-					cachehit=self.cachehit,
-					iops_override=iops_override
-					)
-		self.workload.setExtraOptions(self.extraOptions)
-		self.runTime=time.ctime()
-		print "#######"
-		print "Process below"
-		if forkfill:
-			self.workload.fill(fork=1)
-		else:
-			print self.workload.run(fork=1)
-		print "#######"
-
-	def cleanup_workload(self):
-		self.workload.cleanup_process()
-	def stop_workload(self,skip_cleanup=0,LIMIT=60):
-		print "stop_Workload called...attempting to exit DP cleanly"
-
-		try:
-			iops,mbs,rt,cpu_user,cpu_system=self.workload.stop(skip_cleanup,LIMIT)
-		except TypeError:  
-			self.stopTime=time.ctime()
-			print "Nothing to parse"
-			return
-
-		if skip_cleanup:
-			return
-
-		self.stopTime=time.ctime()
-
-		actualqdepth=self.workload.get_qdepth()
-
-		if self.workload.supports_detailed_results():
-			read_iops,read_mbs,read_latency,write_iops,write_mbs,write_latency=self.workload.get_detailed_results()
-			print actualqdepth,iops,mbs,rt,"  r",read_iops,read_mbs,read_latency,"  w",write_iops,write_mbs,write_latency,"         ",cpu_user,cpu_system
-
-		else:
-			print actualqdepth,iops,mbs,rt,"         ",cpu_user,cpu_system
+        def prefill(self):
+                print "Running fill"
+                self.__run_fill__()
+                print "Fill complete"
+        def poll(self):
+                try:
+                        if self.workload:
+                                return self.workload.poll()
+                        else:
+                                return -1
+                except:
+                        traceback.print_exc()
+                        return -1
 
 
+        def start_workload(self,accessMode=None,readpct=None,seekpct=None,xfer=None,qdepth=None,extra="",forkfill=0):
+                if not accessMode:
+                        accessMode=self.accessList[0][0]
+                if not readpct:
+                        readpct=self.accessList[0][1]
+                if not seekpct:
+                        seekpct=self.accessList[0][2]
+                if not qdepth:
+                        qdepth=self.qdepths[0]
+                if not xfer:
+                        xfer=self.xferList[0]
+                iops_override=self.iops_override
+                debug("Executiong FIOX and VESPER via Performance Framework")
+                self.workload=self.IOTool(
+                                        xfer,
+                                        qdepth,
+                                        self.warmupTime,
+                                        self.measurementTime,
+                                        accessMode,
+                                        self.devList,
+                                        readpct=readpct,
+                                        offset=self.offset,
+                                        seekpct=seekpct,
+                                        aoConfig=self.aoConfig,
+                                        sampleCount=self.sampleCount,
+                                        hostConfig=self.hostConfigs,
+                                        ioengineConfig=self.ioengineConfigs,
+                                        extralabel=extra,
+                                        pattern=self.pattern,
+                                        cachehit=self.cachehit,
+                                        iops_override=iops_override
+                                        )
+                self.workload.setExtraOptions(self.extraOptions)
+                self.runTime=time.ctime()
+                print "#######"
+                print "Process below"
+                if forkfill:
+                        self.workload.fill(fork=1)
+                else:
+                        print self.workload.run(fork=1)
+                print "#######"
 
-		
+        def cleanup_workload(self):
+                self.workload.cleanup_process()
+        def stop_workload(self,skip_cleanup=0,LIMIT=60):
+                print "stop_Workload called...attempting to exit DP cleanly"
+
+                try:
+                        iops,mbs,rt,cpu_user,cpu_system=self.workload.stop(skip_cleanup,LIMIT)
+                except TypeError:  
+                        self.stopTime=time.ctime()
+                        print "Nothing to parse"
+                        return
+
+                if skip_cleanup:
+                        return
+
+                self.stopTime=time.ctime()
+
+                actualqdepth=self.workload.get_qdepth()
+
+                if self.workload.supports_detailed_results():
+                        read_iops,read_mbs,read_latency,write_iops,write_mbs,write_latency=self.workload.get_detailed_results()
+                        print actualqdepth,iops,mbs,rt,"  r",read_iops,read_mbs,read_latency,"  w",write_iops,write_mbs,write_latency,"         ",cpu_user,cpu_system
+
+                else:
+                        print actualqdepth,iops,mbs,rt,"         ",cpu_user,cpu_system
+
+
+
+
 def main(stdoutWrapper=None):
-	if not stdoutWrapper:
-		sys.stdout=stdoutWrapper=stdout_wrapper("./logs/fiox_default_logfile.log",basic=1)
+        if not stdoutWrapper:
+                sys.stdout=stdoutWrapper=stdout_wrapper("./logs/fiox_default_logfile.log",basic=1)
 
-	#use these intensities
-	qdepths=[1,2,4,8,16,24,32,48,64]#,96,128,256,384,512]
-	#qdepths=[256,384,512]
+        #use these intensities
+        qdepths=[1,2,4,8,16,24,32,48,64]#,96,128,256,384,512]
+        #qdepths=[256,384,512]
 
-	#Set Transfer sizes to 40k, 64k, 512k, 1024k
-	#xferList=[4,64,512,1024]
-	xferList=[8,256]#,64,512,1024]
+        #Set Transfer sizes to 40k, 64k, 512k, 1024k
+        #xferList=[4,64,512,1024]
+        xferList=[8,256]#,64,512,1024]
 
-	#Use sequentialreads and writes
-	accessList=[
-			["random read",100,100],
-			["random write",0,100],
-			["sequential read",100,0],
-			["sequential write",0,0],
-			["OLTP",60,100]
-	]
+        #Use sequentialreads and writes
+        accessList=[
+                        ["random read",100,100],
+                        ["random write",0,100],
+                        ["sequential read",100,0],
+                        ["sequential write",0,0],
+                        ["OLTP",60,100]
+        ]
 
-	debug(qdepths,1)
-	debug(accessList,1)
-	debug(xferList,1)
+        debug(qdepths,1)
+        debug(accessList,1)
+        debug(xferList,1)
 
-	#Create OptimalPerformance instance
-	op=OptimalPerformance(qdepths,accessList,xferList,fixedQdepths=0,stdoutWrapper=stdoutWrapper)
+        #Create OptimalPerformance instance
+        op=OptimalPerformance(qdepths,accessList,xferList,fixedQdepths=0,stdoutWrapper=stdoutWrapper)
 
-	def exit_handler(signal,frame):
-		sys.__stdout__.write("EXIT HANDLER CALLED %s" % str(signal))
-		print "EXIT HANDLER CALLED %s" % str(signal)
-		print sys.argv
+        def exit_handler(signal,frame):
+                sys.__stdout__.write("EXIT HANDLER CALLED %s" % str(signal))
+                print "EXIT HANDLER CALLED %s" % str(signal)
+                print sys.argv
 
-	if hasattr(os.sys,'winver'):
-		signal.signal(signal.SIGTERM,exit_handler)
-		signal.signal(signal.SIGBREAK,exit_handler)
-		signal.signal(signal.SIGINT,exit_handler)
-	else:
-		signal.signal(signal.SIGQUIT,exit_handler)
-	
+        if hasattr(os.sys,'winver'):
+                signal.signal(signal.SIGTERM,exit_handler)
+                signal.signal(signal.SIGBREAK,exit_handler)
+                signal.signal(signal.SIGINT,exit_handler)
+        else:
+                signal.signal(signal.SIGQUIT,exit_handler)
 
-	if op.check_usage():
-		try:
-			op.run()
-		except:
-			traceback.print_exc()
-			print "Attempting to stop workload (if its running"
-			exit_handler(None,None)
 
-	else:
-		print "ERROR, use parm -h for help"
+        if op.check_usage():
+                try:
+                        op.run()
+                except:
+                        traceback.print_exc()
+                        print "Attempting to stop workload (if its running"
+                        exit_handler(None,None)
+
+        else:
+                print "ERROR, use parm -h for help"
 
 #if __name__ == "__main__":
 #	sys.stdout=stdout_wrapper()

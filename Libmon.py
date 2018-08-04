@@ -336,7 +336,21 @@ class SarMon:
 		self.reset()
 	def reset(self):
 		self.sarfiles=[]
-	
+class HistogramFioMon:
+    def __init__(self):
+        self.hosts=[]
+    def add_host(self,host):
+        self.hosts.append(host)
+    def process_files(self):
+        cmd="python fiologparser_hist.py --percentiles 90:95:99:99.99:99.999 --divisor 1000000 z_clat_hist.*.log*"
+        result=commands.getoutput(cmd)
+        return results
+    def cleanup(self):
+        cmd="rm z_clat_hist.*.log*"
+        commands.getoutput(cmd)
+        return 1
+
+
 def test2():
 	foo=SarMon()
 	foo.add_host('hp380-04')
