@@ -54,7 +54,7 @@ class FioxCaptureTool:
                 output=None
 		self.sarmon.wait_for_complete()	
 		self.sarmon.copy_files()
-                output=self.histmon.process_files()
+                #output=self.histmon.process_files()
 
                 return output
 
@@ -2434,7 +2434,7 @@ class OptimalPerformance:
                         for mix in self.mixtureList:
                                 self.accessList.append(["OLTP",mix,100])
 
-                if self.extraOptions.warmup:
+                if self.extraOptions.warmup != None:
                         self.warmupTime=self.extraOptions.warmup
 
                 if self.extraOptions.measurement:
@@ -2470,6 +2470,7 @@ class OptimalPerformance:
                                 sys.exit()
                         self.sampleCount=self.measurementTime/self.extraOptions.sampleinterval
                         self.sampleInterval=self.extraOptions.sampleinterval
+                        self.measurementTime=self.sampleInterval
                 else:
                         self.sampleCount=1#self.measurementTime
 
@@ -2702,7 +2703,7 @@ class OptimalPerformance:
                                     #without relying on the write_hist_log functionality
                                     ########################
                                     samplerun=0
-                                    while (samplerun <= sampleCount):
+                                    while (samplerun <= self.sampleCount):
                                         samplerun+=1
 
                                         qdepth=qdepthList[i]
