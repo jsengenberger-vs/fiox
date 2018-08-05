@@ -2786,7 +2786,7 @@ class OptimalPerformance:
                                                 #print "%s %s %s %s %s %s %s	\t%s" % (actualqdepth,iops,mbs,rt,cpu_user,cpu_system,r_and_w_percentiles,indepthperf)
                                                 print "%s %s %s %s %s	\t%s" % (actualqdepth,iops,mbs,rt,r_and_w_percentiles,indepthperf)
 
-                                        if capturetool_output != None:
+                                        if capturetool_output != None and capturetool_output != 0:
                                             print "#############################"
                                             print capturetool_output
                                             print "#############################"
