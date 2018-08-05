@@ -22,7 +22,7 @@ def get_pg_status():
         pool_pgs={}
 	pglist=[]
 	scrublist=[]
-	command="ceph pg dump"
+	command="ceph pg dump pgs"
 	for row in commands.getoutput(command).split("\n"):
 		if row.find("active") == -1:
 			continue
@@ -81,6 +81,8 @@ def run_test(scrubcount=1,timeout=3600,poolname=None):
                     else:
                         pglist=pool_pgs[poolname]['pglist']
                         scrublist=pool_pgs[poolname]['scrublist']
+	                pglist.sort()		
+	                pglist.reverse()
 		delta=scrubcount-len(scrublist)
 		while delta > 0:
 			scrubstamp,pgid=pglist.pop()
