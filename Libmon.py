@@ -312,9 +312,12 @@ class SarMon:
 			self.sarfiles.append([host,sarfile])
 			self.manager.start_process('ssh -q %s  sar -d %s %s -o %s > /dev/null' % (host,self.samplesize,self.samplecount,sarfile))
 	def copy_files(self):
+                count=0
 		for host,sarfile in self.sarfiles:
 			self.manager.start_process('scp -q %s:%s /tmp' % (host,sarfile))
+                        count+=1
 		self.wait_for_complete()
+                return count
 
 	def cleanup_sar_files(self):
 		for host,sarfile in self.sarfiles:

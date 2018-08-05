@@ -53,7 +53,7 @@ class FioxCaptureTool:
 	def posttest_capture(self,measurementname):
                 output=None
 		self.sarmon.wait_for_complete()	
-		self.sarmon.copy_files()
+		output=self.sarmon.copy_files()
                 #output=self.histmon.process_files()
 
                 return output
@@ -2767,6 +2767,9 @@ class OptimalPerformance:
                                         runTime=time.time() - runTime
 
                                         capturetool_output=self.capturetool.posttest_capture(capture_measurementname)
+                                        indephtperf=""
+                                        if capturetool_output != None and capturetool_output > 0:
+                                            indepthperf="/root/fiox/op_logs/perflogs/%s.csv" % capture_measurementname
 
                                         #Get the qdepth actually being used. If 
                                         actualqdepth=myMeasure.get_qdepth()
@@ -2774,8 +2777,6 @@ class OptimalPerformance:
                                         r_and_w_percentiles=""
                                         if myMeasure.supports_percentiles():
                                                 r_and_w_percentiles=myMeasure.get_percentiles()
-
-                                        indepthperf="/root/fiox/op_logs/perflogs/%s.csv" % capture_measurementname
 
                                         if myMeasure.supports_detailed_results():
                                                 read_iops,read_mbs,read_latency,write_iops,write_mbs,write_latency=myMeasure.get_detailed_results()
