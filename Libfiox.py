@@ -2767,7 +2767,7 @@ class OptimalPerformance:
                                         runTime=time.time() - runTime
 
                                         capturetool_output=self.capturetool.posttest_capture(capture_measurementname)
-                                        indephtperf=""
+                                        indepthperf=""
                                         if capturetool_output != None and capturetool_output > 0:
                                             indepthperf="/root/fiox/op_logs/perflogs/%s.csv" % capture_measurementname
 
