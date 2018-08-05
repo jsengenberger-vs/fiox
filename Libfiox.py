@@ -1845,6 +1845,7 @@ class FIO_Measurement(Measurement):
 
 		#cpu_user=Decimal(output[44].replace("%","")).quantize(Decimal('0.1'))
 		#cpu_system=Decimal(output[45].replace("%","")).quantize(Decimal('0.1'))
+                #Its unclear the usefulness of this information, I'm repopping it - 8/1/2018
 		cpu_user=job['usr_cpu']
 		cpu_system=job['sys_cpu']
 
@@ -2781,7 +2782,8 @@ class OptimalPerformance:
                                                 print "%s %s %s %s  r %s %s %s   w %s %s %s %s	\t%s" % (actualqdepth,iops,mbs,rt,read_iops,read_mbs,read_latency,write_iops,write_mbs,write_latency,r_and_w_percentiles,indepthperf)
 
                                         else:
-                                                print "%s %s %s %s %s %s %s	\t%s" % (actualqdepth,iops,mbs,rt,cpu_user,cpu_system,r_and_w_percentiles,indepthperf)
+                                                #print "%s %s %s %s %s %s %s	\t%s" % (actualqdepth,iops,mbs,rt,cpu_user,cpu_system,r_and_w_percentiles,indepthperf)
+                                                print "%s %s %s %s %s	\t%s" % (actualqdepth,iops,mbs,rt,r_and_w_percentiles,indepthperf)
 
                                         if capturetool_output != None:
                                             print "#############################"
@@ -2799,8 +2801,8 @@ class OptimalPerformance:
                                                 myMeasure.cleanup()
 
                                         self.capturetool.posttest_cleanup(capture_measurementname)
-                                        time.sleep(self.restTime)
-                                        i+=1
+                                    time.sleep(self.restTime)
+                                    i+=1
                 print "#MEASUREMENTS"
                 return 1
 
