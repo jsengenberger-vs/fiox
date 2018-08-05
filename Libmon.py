@@ -343,7 +343,7 @@ class HistogramFioMon:
         self.hosts.append(host)
     def process_files(self):
         cmd="python fiologparser_hist.py --percentiles 90:95:99:99.99:99.999 --divisor 1000000 z_clat_hist.*.log*"
-        result=commands.getoutput(cmd)
+        results=commands.getoutput(cmd)
         return results
     def cleanup(self):
         cmd="rm z_clat_hist.*.log*"

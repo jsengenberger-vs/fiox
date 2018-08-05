@@ -1931,7 +1931,18 @@ class FIO_Measurement(Measurement):
 			
 	def __create_file_text__(self,empty=False):
 		self.get_extra_fio_parms()
-		
+                self.warmupText="#No Warmup specified - skipping"
+                if self.warmupTime and int(self.warmupTime) > 0:
+                    self.warmupText="""
+## Work around some buggy FIO behavior, double warmup time to compensate
+#[job_warmup]
+#ramp_time=%(warmupTime)s
+numjobs=%(qdepth)s
+runtime=%(warmupTime)s
+stonewall
+                    """
+
+
 		fileText="""
 [global]
 ioengine=%(ioengine)s
@@ -1956,13 +1967,7 @@ nrfiles=%(deviceCount)s
 %(extra)s
 ###End extra parameters
 
-
-## Work around some buggy FIO behavior, double warmup time to compensate
-#[job_warmup]
-#ramp_time=%(warmupTime)s
-numjobs=%(qdepth)s
-runtime=%(warmupTime)s
-stonewall
+%(warmupText)s
 
 ##Actual measurement
 [job2_measurement]
@@ -2108,7 +2113,8 @@ class OptimalPerformance:
 		parser.add_option("--hosts",		dest="hostlist",	help="List of Hosts to run against.  Default is localhost",type="string"),
                 parser.add_option("--sar",		dest="sarcapture",	help="Enables capture of 1 second granular SR data for all [hosts|localhost]",action='store_true'),
                 parser.add_option("--mons",		dest="monlist",		help="List of extra systems like ceph nodes to monitor",type="string"),
-                parser.add_option("--histo_timeseries",	dest="histo_timeseries",help="capture histogram timeseries for each measurement",action='store_true'),
+                parser.add_option("--histo_timeseries",	dest="histo_timeseries",help="(FIO-doesnotwork)histogram timeseries for each measurement",action='store_true'),
+                #parser.add_option("--sa",	        dest="regsam",          help="capture --regsam [#] number of samples for each queue depth, using me as the sample size",action='store_true'),
                 parser.add_option("--ao_input",		dest="aoConfig",	help="Filename and ao policy to use.  --ao_input <aosample.csv>,<evening_policy>,<total_capacity_in_gb>.  Default is diabled",type="string"),
                 parser.add_option("-x","--xferlist",	dest="xferlist",	help="List of I/O transfer sizes to use.  Default: [8,128]",type="string"),
                 parser.add_option("-q","--tl",		dest="qdepthlist",	help="List of Qdepths to start with. Default: [1,2,4,8,12,16,32,64]",type="string"),
@@ -2684,6 +2690,21 @@ class OptimalPerformance:
                                 qdepthList=list(self.qdepths)
 
                                 while i < len(qdepthList):
+                                    #This while loop is horribly overloaded
+                                    #
+                                    #This "Samplerun" section allows multiple samples to be captured using the primary
+                                    #workload generator, and "Restarting" it after every sample period.
+                                    #
+                                    #This is being intrudoced 7/2018 due to issues with FIO and collecting garbage in is
+                                    #write_hist_log functionality.
+                                    #
+                                    #We need to be able to record and monitor histogram during long running measurements
+                                    #without relying on the write_hist_log functionality
+                                    ########################
+                                    samplerun=0
+                                    while (samplerun <= sampleCount):
+                                        samplerun+=1
+
                                         qdepth=qdepthList[i]
 
                                         if qdepthLimit and qdepth > qdepthLimit:
