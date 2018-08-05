@@ -37,7 +37,7 @@ def get_pg_status():
 
                                 poolname=pools[poolid]
 
-                                if pool_pgs.has_key(poolname):
+                                if not pool_pgs.has_key(poolname):
                                     pool_pgs[poolname]={'scrublist':[],'pglist':[]}
 
 				object_count=int(row[1])
