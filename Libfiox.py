@@ -2691,6 +2691,11 @@ class OptimalPerformance:
                                 qdepthList=list(self.qdepths)
 
                                 while i < len(qdepthList):
+                                    qdepth=qdepthList[i]
+
+                                    if qdepthLimit and qdepth > qdepthLimit:
+                                        i+=1
+                                        continue
                                     #This while loop is horribly overloaded
                                     #
                                     #This "Samplerun" section allows multiple samples to be captured using the primary
@@ -2705,12 +2710,6 @@ class OptimalPerformance:
                                     samplerun=0
                                     while (samplerun <= self.sampleCount):
                                         samplerun+=1
-
-                                        qdepth=qdepthList[i]
-
-                                        if qdepthLimit and qdepth > qdepthLimit:
-                                                i+=1
-                                                continue
 
                                         #myMeasure=FIO_Measurement(xfer,qdepth,self.warmupTime,self.measurementTime,accessMode,self.devList)
                                         debug("READ PERCENT AT INIT %s" % readpct,2)
