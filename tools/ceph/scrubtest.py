@@ -11,6 +11,7 @@ def get_pools():
     pools={}
     pooldata=commands.getoutput("ceph osd lspools")
     for pool in pooldata.strip().split(","):
+        if not pool.strip(): continue
         poolid,poolname=pool.split()
         pools[poolid]=poolname
     return pools
@@ -75,7 +76,7 @@ def run_test(scrubcount=1,timeout=3600,poolname=None):
                 if poolname != None:
                     print "Restricting PGS to pool %s" % poolname
                     if not pool_pgs.has_key(poolname):
-                        print "Unable to find pool %s in cluster"
+                        print "Unable to find pool %s in cluster" % poolname
                         sys.exit()
                     else:
                         pglist=pool_pgs[poolname]['pglist']
