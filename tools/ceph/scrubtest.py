@@ -4,6 +4,14 @@ import commands
 import traceback
 from optparse import OptionParser
 
+#
+# Author: John Sengenberger 
+#
+#TODO: Add pool overrides onto CLI
+#TODO: simplifly run on code
+#TODO: Poll status of deep-scrub on specific PGs instead of polling entire cluster
+############
+
 #root@hp380-37:~# ceph pg dump|grep -i active |head -50
 #dumped all in format plain
 #2.1af	711	0	0	0	0	2949857299	3081	3081	active+clean	2018-07-20 04:00:11.189857	956'6143899	956:7074795	[17,0,10]	17	[17,0,10]	17	956'5824651	2018-07-20 04:00:11.188563	956'5824651	2018-07-20 04:00:11.188563
