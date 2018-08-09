@@ -91,10 +91,15 @@ def start_scrub(pgid,silent=0):
 def is_master():
     hostname=commands.getoutput('hostname').strip().split(".")[0]
     primary=None
-    try:primary=commands.getoutput("ceph status|grep mgr").strip().split("mgr:")[1].split("(")[0]
+    try:
+        primary=commands.getoutput("ceph status|grep mgr").strip().split("mgr:")[1].split("(")[0].strip()
+        if len(primary) == 0:
+            primary=commands.getoutput("ceph status|grep quorum").strip().split(",")[-1]
     except: 
-        traceback.print_exc()
-        print "Error: Unable to parse cephstatus."
+        if primary == None or len(primary) == 0:
+            primary=commands.getoutput("ceph status|grep quorum").strip().split(",")[-1]
+        #traceback.print_exc()
+        #print "Error: Unable to parse cephstatus."
         return False
     if primary != None and primary.strip() == hostname.strip():
         return True
