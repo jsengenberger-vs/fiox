@@ -82,7 +82,7 @@ def get_pg_status():
 	return pglist,scrublist,pool_pgs
 
 def start_scrub(pgid,silent=0):
-        if not silent:print "starting scrub for %s" % pgid
+        if not silent:print "starting deep-scrub for %s" % pgid
 	#print "starting scrub for %s" % pgid
 	command="ceph pg deep-scrub %s" % pgid
 	commands.getoutput(command)
@@ -182,7 +182,7 @@ def run_production_scrubbing(numDays=56,runOnce=False,runForever=True,timeLimit=
             print "Deep Scrub in progress, skipping deep-scrub operation"
 
         scrubstamp,pgid,object_count=pglist.pop()
-        print "%s -- Starting deep-scrub %s" % (time.ctime(),pgid)
+        #print "%s -- Starting deep-scrub %s" % (time.ctime(),pgid)
         start_scrub(pgid)
         numDeepScrubs+=1
         starttime=time.time()
@@ -205,7 +205,16 @@ def run_production_scrubbing(numDays=56,runOnce=False,runForever=True,timeLimit=
     return numDeepScrubs
 
 
-def run_scrub_measurement_test(poolname=None,sampleCount=30,iosize=512):
+def set_osd_parm(parm,value):
+     command="ceph tell osd.* injectargs --%s %s" % (parm,value)
+     #print command
+     #print commands.getoutput(command)
+
+     return 1
+
+
+
+def run_scrub_measurement_test(poolname=None,sampleCount=10,iosize=512,print_extra=""):
     pg_counts=[1]
 
     for pg_count in pg_counts:
@@ -219,12 +228,7 @@ def run_scrub_measurement_test(poolname=None,sampleCount=30,iosize=512):
         #while get_number_active_scrubs(poolname):
         #    time.sleep(1)
 
-        print "#"
-        print "#"
-        print "Starting test"
-        print "#"
-        print "#"
-        print "pgid\tobjcount\tscrub_ops\tscrub_svt\tseconds"
+        print "pgid\tobjcount\tscrub_ops\tscrub_svt\tseconds\textra"
         while sampleCount > 0:
             scrubstamp,pgid,object_count=pglist.pop()
             start_scrub(pgid,silent=1)
@@ -239,12 +243,26 @@ def run_scrub_measurement_test(poolname=None,sampleCount=30,iosize=512):
             est_scrub_read_ops=(int(object_count)*4000)/iosize
             est_scrub_op_servicetime=deltatime/float(est_scrub_read_ops)
 
-            print "%s\t%s\t%s\t%s\t%s" % (pgid,object_count,est_scrub_read_ops,est_scrub_op_servicetime,deltatime)
+            print "%s\t%s\t%s\t%s\t%s\t%s" % (pgid,object_count,est_scrub_read_ops,est_scrub_op_servicetime,deltatime,print_extra)
             time.sleep(60)
 
             sampleCount-=1
     return 1
+def run_multi_scrub_measurement_test(poolName='volumes'):
+    sleep_parms=[0,0.1,0.2,0.4,0.5,1]
+    stride_sizes=[524288,524288/2,524288/4,524288/8]
+    min_max_chunk=[1,2,3,4,5,6,7,8]
 
+    for sleep_parm in sleep_parms:
+        for stride in stride_sizes:
+            for min_max in min_max_chunk:
+                set_osd_parm('osd_scrub_sleep',sleep_parm)
+                set_osd_parm('osd_deep_scrub_stride',stride)
+                set_osd_parm('osd_scrub_chunk_min',min_max)
+                set_osd_parm('osd_scrub_chunk_max',min_max)
+                extra="%s:%s:%s" % (sleep_parm,stride,min_max)
+                iosize=stride/1024
+                run_scrub_measurement_test(poolName,10,iosize,print_extra=extra)
 
 def run_time_test(scrubcount=1,timeout=3600,poolname=None):
 	starttime=time.time()
@@ -303,6 +321,7 @@ def config_cli():
     parser.add_option("--scrub_all",dest="scrub_all",help="Runs deep-scrub operations in a loop designed to execute over a 56 day schedule",action='store_true')
     parser.add_option("--dev_tt",dest="run_time_test",help="Internal/Dev for performance profiling: runs deep-scrub non-stop for 1800s",action='store_true')
     parser.add_option("--dev_pt",dest="run_scrub_perf_test",help="Interal/Dev for performance profiling: Measure length of time for Deep-Scrub",action='store_true')
+    parser.add_option("--dev_multi",dest="dev_multi",help="Interal/Dev for performance profiling: test multiple parameters",action='store_true')
     parser.add_option("--disable_scrub",dest="disable_scrub",help="Disables scrub and deep scrub",action='store_true')
     parser.add_option("--force",dest="force",help="Run scrub operations regardless of cluster state",action='store_true')
 
@@ -336,6 +355,9 @@ def main():
         print "Running scrub perf test"
         #Note: Expand parser CLI options to make parms inputs
         run_scrub_measurement_test(poolname="volumes",sampleCount=10)
+    elif parser.dev_multi:
+        print "Running Multi scrub test"
+        run_multi_scrub_measurement_test(poolName='volumes')
     else:
         print "Error: Missing valid argument: 1 argument required"
     return 1
