@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import commands
 import traceback
@@ -65,11 +66,11 @@ def get_pg_status():
 				if object_count < 5:
 					continue
 				if status.find("scrub") > -1:
-                                        pool_pgs[poolname]['scrublist'].append([scrubstamp,pgid])
-					scrublist.append([scrubstamp,pgid])
+                                        pool_pgs[poolname]['scrublist'].append([scrubstamp,pgid,object_count])
+					scrublist.append([scrubstamp,pgid,object_count])
 				else:
-                                        pool_pgs[poolname]['pglist'].append([scrubstamp,pgid])
-					pglist.append([scrubstamp,pgid])
+                                        pool_pgs[poolname]['pglist'].append([scrubstamp,pgid,object_count])
+					pglist.append([scrubstamp,pgid,object_count])
 			except:continue
 
 	#should use an presorted list
@@ -80,7 +81,8 @@ def get_pg_status():
         ##########
 	return pglist,scrublist,pool_pgs
 
-def start_scrub(pgid):
+def start_scrub(pgid,silent=0):
+        if not silent:print "starting scrub for %s" % pgid
 	#print "starting scrub for %s" % pgid
 	command="ceph pg deep-scrub %s" % pgid
 	commands.getoutput(command)
@@ -104,11 +106,24 @@ def get_number_active_scrubs(poolname):
     scrublist=pool_pgs[poolname]['scrublist']
     return len(scrublist)
 
+def wait_scrubbing_complete(silent=0):
+    while 1:
+        pgN,scrublist,pool_pgs=get_pg_status()
+        if len(scrublist) <= 0:
+            break
+        if not silent:
+            print "Waiting for %s scrubs to complete before starting" % len(scrublist)
+        time.sleep(5)
+    return 
+
 
 def run_production_scrubbing(numDays=56,runOnce=False,runForever=True):
 
-    if is_master():
+    if not is_master():
         print "Exiting... Not master server"
+        sys.exit()
+
+    wait_scrubbing_complete(silent=0)
 
     seconds=numDays*24*3600
     numDeepScrubs=0
@@ -126,7 +141,7 @@ def run_production_scrubbing(numDays=56,runOnce=False,runForever=True):
         if len(scrublist) > 0:
             print "Deep Scrub in progress, skipping deep-scrub operation"
 
-        scrubstamp,pgid=pglist.pop()
+        scrubstamp,pgid,object_count=pglist.pop()
         print "%s -- Starting deep-scrub %s" % (time.ctime(),pgid)
         start_scrub(pgid)
         numDeepScrubs+=1
@@ -134,50 +149,61 @@ def run_production_scrubbing(numDays=56,runOnce=False,runForever=True):
 
         #Wait 10 seconds after requesting deep-scrub operation to start monitoring for its completion
         time.sleep(10)
-        while 1:
-            pgN,scublist,pool_pgs=get_pg_status()
-            if len(scrublist) <= 0:
-                break
-            time.sleep(5)
 
-        scrubtime=startime-time.time()
+        wait_scrubbing_complete(silent=1)
+
+
+        scrubtime=int(time.time()-starttime)
         nexttime=(time.time()-scrubtime)+time_delay
+        time_remaining=nexttime-time.time()
         print "%s -- pgid: %s, deep-scrub-time: %s,next_start: %s" % (time.ctime(),pgid,scrubtime,time.ctime(nexttime))
 
         if runOnce:
             break
         else:
-            time.sleep(time_delay)
+            time.sleep(time_remaining)
     return numDeepScrubs
 
 
-def run_scrub_measurement_test(poolname=None,sampleCount=10):
+def run_scrub_measurement_test(poolname=None,sampleCount=30,iosize=512):
     pg_counts=[1]
 
     for pg_count in pg_counts:
 
-	pglist,scrublist,pool_pgs=get_pg_status()
+        pglist,scrublist,pool_pgs=get_pg_status()
         pglist=pool_pgs[poolname]['pglist']
         scrublist=pool_pgs[poolname]['scrublist']
-        pglist.sort()		
+        pglist.sort()
         pglist.reverse()
+        #print "waiting for active scrubs"
+        #while get_number_active_scrubs(poolname):
+        #    time.sleep(1)
 
-        scrubstamp,pgid=pglist.pop()
-        print "pgid\t seconds"
+        print "#"
+        print "#"
+        print "Starting test"
+        print "#"
+        print "#"
+        print "pgid\tobjcount\tscrub_ops\tscrub_svt\tseconds"
         while sampleCount > 0:
-            start_scrub(pgid)
+            scrubstamp,pgid,object_count=pglist.pop()
+            start_scrub(pgid,silent=1)
             starttime=time.time()
+            time.sleep(5)
 
             while get_number_active_scrubs(poolname) > 0:
                 time.sleep(1)
 
             deltatime=time.time()-starttime
 
-            print "%s\t%s" % (pgid,deltatime)
+            est_scrub_read_ops=(int(object_count)*4000)/iosize
+            est_scrub_op_servicetime=deltatime/float(est_scrub_read_ops)
+
+            print "%s\t%s\t%s\t%s\t%s" % (pgid,object_count,est_scrub_read_ops,est_scrub_op_servicetime,deltatime)
+            time.sleep(60)
 
             sampleCount-=1
     return 1
-
 
 
 def run_time_test(scrubcount=1,timeout=3600,poolname=None):
@@ -198,11 +224,12 @@ def run_time_test(scrubcount=1,timeout=3600,poolname=None):
 	                pglist.reverse()
 		delta=scrubcount-len(scrublist)
 		while delta > 0:
-			scrubstamp,pgid=pglist.pop()
-                        scrubstamp,pgid
-			start_scrub(pgid)
-			delta-=1
-			time.sleep(5)
+                    #pay or may not contain object count
+                    scrubstamp,pgid,object_count=pglist.pop()
+                    scrubstamp,pgid
+                    start_scrub(pgid)
+                    delta-=1
+                    time.sleep(5)
 		else:
 			for pgrow in scrublist:
 				print "%s in progress %s - remaining seconds %s" % (pgrow[0],pgrow[1],(endtime-time.time()))
