@@ -121,19 +121,54 @@ def wait_scrubbing_complete(silent=0):
         time.sleep(5)
     return 
 
+def is_cluster_health_good():
+    return_value=1
+    ignore=['noscrub','nodeep-scrub']
+    output=commands.getoutput("ceph health").strip()
+    flags=output.split()[1].split(",")
+    #If 1 or more flags are found that are not defined in ignore[], we return false
+    for flag in flags:
+        if flag not in ignore:
+            return_value=0
+    conditions=output.split(";")
+    if len(conditions) > 1:
+        print "Found multiple conditions, must be resolved before we continue: %s " % output
+        return_value=0
+    return return_value
 
-def run_production_scrubbing(numDays=56,runOnce=False,runForever=True):
+
+def run_production_scrubbing(numDays=56,runOnce=False,runForever=True,timeLimit=0,force=False):
 
     if not is_master():
         print "Exiting... Not master server"
-        sys.exit()
+        sys.exit(4)
+
+    if not check_required_flags():
+        disable_scrub()
+        if not check_required_flags():
+            print "ERROR: Unable to set or find required ceph system flags in 'ceph status'.  Exiting"
+            sys.exit(5)
 
     wait_scrubbing_complete(silent=0)
 
     seconds=numDays*24*3600
     numDeepScrubs=0
+    loopStartTime=time.time()
 
     while 1:
+        if timeLimit:
+            if (loopStartTime+timeLimit) < time.time():
+                print "Time limit of %s seconds exceeded, exiting" % timeLimit
+                break
+
+        if not is_cluster_health_good() and not force:
+            if runForever:
+                print "Error: Unable to continue, as cluster health is not optimal. Checking in 10 minutes"
+                time.sleep(600)
+                continue
+            else:
+                print "Error: Unable to continue, as cluster health is not optimal. runForver set to False, exiting"
+                sys.exit(3)
         pglist,scrublist,pool_pgs=get_pg_status()
         num_pgs=len(pglist)
         if num_pgs < 1:
@@ -221,7 +256,7 @@ def run_time_test(scrubcount=1,timeout=3600,poolname=None):
                     print "Restricting PGS to pool %s" % poolname
                     if not pool_pgs.has_key(poolname):
                         print "Unable to find pool %s in cluster" % poolname
-                        sys.exit()
+                        sys.exit(6)
                     else:
                         pglist=pool_pgs[poolname]['pglist']
                         scrublist=pool_pgs[poolname]['scrublist']
@@ -239,6 +274,24 @@ def run_time_test(scrubcount=1,timeout=3600,poolname=None):
 			for pgrow in scrublist:
 				print "%s in progress %s - remaining seconds %s" % (pgrow[0],pgrow[1],(endtime-time.time()))
 		time.sleep(10)
+
+def check_required_flags():
+    required_flags=['noscrub','nodeep-scrub']
+
+    output=commands.getoutput("ceph health").strip()
+    flags=output.split()[1].split(",")
+    #If 1 or more flags are found that are not defined in ignore[], we return false
+    for flag in list(flags):
+        if flag in required_flags:
+            required_flags.remove(flag)
+    if len(required_flags) == 0:
+        return 1
+    return 0
+
+def disable_scrub():
+    commands.getoutput("ceph osd set nodeep-scrub")
+    commands.getoutput("ceph osd set noscrub")
+
 def config_cli():
     usage="""
 %prog [option]
@@ -246,15 +299,18 @@ def config_cli():
     parser=OptionParser()
 
     parser.add_option("--scrub_one",dest="scrub_one",help="Runs one deep-scrub operation on one PG (oldest unscrubbed).  Terminates after deep-scrub completed",action='store_true')
+    parser.add_option("--scrub_24hr",dest="scrub_24hr",help="Runs deep-scrub for 24 hours targeting 56 day completion.  Designed for cron use.  Terminates after 24 hrs",action='store_true')
     parser.add_option("--scrub_all",dest="scrub_all",help="Runs deep-scrub operations in a loop designed to execute over a 56 day schedule",action='store_true')
     parser.add_option("--dev_tt",dest="run_time_test",help="Internal/Dev for performance profiling: runs deep-scrub non-stop for 1800s",action='store_true')
     parser.add_option("--dev_pt",dest="run_scrub_perf_test",help="Interal/Dev for performance profiling: Measure length of time for Deep-Scrub",action='store_true')
+    parser.add_option("--disable_scrub",dest="disable_scrub",help="Disables scrub and deep scrub",action='store_true')
+    parser.add_option("--force",dest="force",help="Run scrub operations regardless of cluster state",action='store_true')
 
     (options,args) = parser.parse_args()
 
     if len(args) >1:
         print "Error: Missing argument: 1 argument required"
-        sys.exit()
+        sys.exit(2)
 
     return options
 
@@ -262,10 +318,16 @@ def main():
     parser=config_cli()
     if parser.scrub_one:
         print "Running deep-scrub against one PG"
-        run_production_scrubbing(numDays=56,runOnce=True,runForever=False)
+        run_production_scrubbing(numDays=56,runOnce=True,runForever=False,force=parser.force)
+    elif parser.scrub_24hr:
+        print "Running deep-scrub for the next 24 hours"
+        run_production_scrubbing(numDays=56,runOnce=False,runForever=True,timeLimit=24*3600,force=parser.force)
     elif parser.scrub_all:
         print "Running deep-scrub in 56 day loop"
-        run_production_scrubbing(numDays=56,runOnce=False,runForever=True)
+        run_production_scrubbing(numDays=56,runOnce=False,runForever=True,force=parser.force)
+    elif parser.disable_scrub:
+        print "Disabling scrub and deep scrub"
+        disable_scrub()
     elif parser.run_time_test:
         print "Running Time Test"
         #Note: Expand parser CLI options to make parms inputs
