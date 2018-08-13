@@ -100,7 +100,7 @@ def is_master():
             primary=commands.getoutput("ceph status|grep quorum").strip().split(",")[-1]
         #traceback.print_exc()
         #print "Error: Unable to parse cephstatus."
-        return False
+        #return False
     if primary != None and primary.strip() == hostname.strip():
         return True
     return False
