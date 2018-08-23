@@ -57,10 +57,13 @@ def get_pg_status():
                                     pool_pgs[poolname]={'scrublist':[],'pglist':[]}
 
 				object_count=int(row[1])
-                                #Hammer
-				scrubstamp=row[-1]
-                                #Luminous
-                                scrubstamp="%s %s" % (row[-3],row[-2])
+
+				if len(row) > 21:
+					#Luminous
+                                	scrubstamp="%s %s" % (row[-3],row[-2])
+				else:
+					#Hammer
+                                	scrubstamp="%s %s" % (row[-2],row[-1])
 				status=row[9]
 				#ignore very small PG populations
 				if object_count < 5:
