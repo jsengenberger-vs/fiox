@@ -2708,7 +2708,7 @@ class OptimalPerformance:
                                     #We need to be able to record and monitor histogram during long running measurements
                                     #without relying on the write_hist_log functionality
                                     ########################
-                                    samplerun=0
+                                    samplerun=1
                                     while (samplerun <= self.sampleCount):
                                         samplerun+=1
 
